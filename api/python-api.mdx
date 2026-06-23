@@ -1,5 +1,5 @@
 ---
-title: "UHD Python API: MultiUSRP and Type Bindings"
+title: "UHD Python API: MultiUSRP, Streamers, and Type Bindings"
 sidebarTitle: "Python API"
 description: "Install and use the UHD Python API to control USRP hardware with MultiUSRP, StreamArgs, RXMetadata, TXMetadata, and convenience recv/send helpers."
 ---
@@ -268,12 +268,12 @@ t    = np.arange(N) / rate
 waveform = np.exp(1j * 2 * np.pi * 100e3 * t).astype(np.complex64)
 
 usrp.send_waveform(
-    waveform   = waveform,
-    duration   = 1.0,      # transmit for 1 second
-    freq       = 915e6,
-    rate       = rate,
-    channels   = [0],
-    gain       = 60,
+    waveform_proto = waveform,
+    duration       = 1.0,      # transmit for 1 second
+    freq           = 915e6,
+    rate           = rate,
+    channels       = [0],
+    gain           = 60,
 )
 ```
 

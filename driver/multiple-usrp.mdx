@@ -1,7 +1,7 @@
 ---
 title: "Multi-USRP Configuration for MIMO and Array Systems"
 sidebarTitle: "Multi-USRP"
-description: "Combine multiple USRP devices into a single logical device for MIMO operation, synchronized streaming, and large-scale RF arrays."
+description: "Combine multiple USRP devices into a single logical device for MIMO operation, synchronized streaming, and large-scale phased RF arrays."
 ---
 
 Several USRP product families support multi-device operation: multiple physical units can be combined into a single `uhd::usrp::multi_usrp` instance, letting your application treat them as one larger radio. Channels from every device appear in a flat, ordered channel list, and sample alignment between devices is handled automatically when you request a multi-channel streamer. Only devices of the same type can be combined, and all must share a common time and frequency reference for accurate MIMO operation.
@@ -119,8 +119,8 @@ With this configuration across three devices the total channel count is 5 and th
 | 0 | Slot A, Device 0 |
 | 1 | Slot B, Device 0 |
 | 2 | Slot A, Device 1 |
-| 3 | Slot A, Device 2 (B:0 comes first on device 2) |
-| 4 | Slot B, Device 2 |
+| 3 | Slot B, Device 2 (B:0 is first in `B:0 A:0` spec) |
+| 4 | Slot A, Device 2 |
 
 <Warning>
 Per-device subdev specs that differ in slot order are valid but easily misread. Unless you have a specific reason to reorder slots, always use the same spec across all devices.

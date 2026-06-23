@@ -32,10 +32,11 @@ The following parameters are shared across transport types. Pass them as key=val
 |-----------|-----------------|------------------|-------------------|-------|
 | `num_recv_frames` | 32 | 32 | 32 | Number of RX buffers; does not affect throughput |
 | `num_send_frames` | 32 | 32 | 32 | Number of TX buffers; does not affect throughput |
-| `recv_frame_size` | 1472 bytes | 8000 bytes | MTU | Capped at link's receive MTU |
-| `send_frame_size` | 1472 bytes | 8000 bytes | TX MTU | Capped at link's send MTU |
+| `recv_frame_size` | 1472 bytes | 8000 bytes | 8000 bytes | Capped at link's receive MTU |
+| `send_frame_size` | 1472 bytes | 8000 bytes | 8000 bytes | Capped at link's send MTU |
 | `recv_buff_size` | 20 ms at link rate | 20 ms at link rate | 20 ms at link rate | Socket receive buffer |
 | `send_buff_size` | 20 ms at link rate | 20 ms at link rate | 20 ms at link rate | Large values hurt TX perf |
+| `recv_buff_fullness` | ~90% | ~90% | ~90% | UDP only: targeted fullness factor of the receive buffer |
 | `mtu` | Same as frame size | Same as frame size | Same as frame size | Overrides reported MTU in RFNoC graph |
 
 <Note>

@@ -236,9 +236,10 @@ struct sensor_value_t {
         STRING  = 's'
     } type;
 
-    bool   to_bool()  const;
-    signed to_int()   const;
-    double to_real()  const;
+    bool        to_bool()  const;
+    signed      to_int()   const;
+    double      to_real()  const;
+    sensor_map_t to_map()  const;
     std::string to_pp_string() const;
 };
 ```

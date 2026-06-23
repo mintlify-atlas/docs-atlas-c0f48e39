@@ -1,5 +1,5 @@
 ---
-title: "RFNoC Software Architecture: Graph and Blocks"
+title: "RFNoC Software Architecture: Block Controllers and Graph API"
 sidebarTitle: "Software Architecture"
 description: "Explore RFNoC's C++ software layer: block controllers, block IDs, property propagation, the graph API, streamers, and built-in block types."
 ---
@@ -21,7 +21,7 @@ If you need capabilities beyond the default controller, you can derive a custom 
 Every block instance in an RFNoC network is identified by a **Block ID** with the following syntax:
 
 ```
-<Device>/<BlockName>:<Instance>
+<Device>/<BlockName>#<Instance>
 ```
 
 For example, the first DDC block on device 0 has the block ID `0/DDC#0`, and the second FFT block on the same device is `0/FFT#1`. Multiple instances of the same block type share the same **NoC ID** (a 32-bit hardware identifier) but differ in their Block ID.

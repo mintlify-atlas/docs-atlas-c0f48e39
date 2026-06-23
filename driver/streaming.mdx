@@ -1,5 +1,5 @@
 ---
-title: "RX and TX IQ Sample Streaming with UHD Streamers"
+title: "RX and TX IQ Sample Streaming with UHD Streamers API"
 sidebarTitle: "Streaming"
 description: "Stream IQ samples between host and USRP using UHD rx_streamer and tx_streamer, with stream modes, metadata fields, and overflow/underrun handling."
 ---
@@ -98,6 +98,7 @@ Receiving samples involves three steps: create the streamer, issue a stream comm
 
     usrp = uhd.usrp.MultiUSRP("type=x300")
     stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    stream_args.args = "spp=200" # Note this setting is not valid for all USRPs
     rx_streamer = usrp.get_rx_stream(stream_args)
 
     rx_metadata = uhd.types.RXMetadata()
@@ -111,7 +112,6 @@ Receiving samples involves three steps: create the streamer, issue a stream comm
     run_condition = True
     while run_condition:
         samps = rx_streamer.recv(recv_buffer, rx_metadata)
-        # process recv_buffer[:samps]
 
     # Stop streaming
     stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
@@ -168,12 +168,11 @@ Transmitting samples involves creating the streamer, then calling `send()` in a 
 
     usrp = uhd.usrp.MultiUSRP("type=x300")
     stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    stream_args.args = "spp=200" # Note this setting is not valid for all USRPs
     tx_streamer = usrp.get_tx_stream(stream_args)
 
     tx_metadata = uhd.types.TXMetadata()
     tx_buffer = np.zeros(1000000, dtype=np.complex64)
-    # fill tx_buffer with your waveform...
-
     while True:
         samps = tx_streamer.send(tx_buffer, tx_metadata)
     ```

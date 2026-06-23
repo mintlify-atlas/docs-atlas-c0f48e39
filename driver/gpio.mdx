@@ -21,7 +21,7 @@ Common bank names by device:
 
 | Device | Bank Name | Width | Connector |
 |--------|-----------|-------|-----------|
-| X3x0 | `FP0` | 12 bits | Front panel DB9 |
+| X3x0 | `FP0` | 12 bits | Front panel DB15 |
 | E31x | `INT0` | 6 bits | Internal header |
 | E320 | `FP0` | 8 bits | Mini-HDMI (Type C) |
 | N3x0 / X410 | `FP0` | device-dependent | Front panel |
@@ -63,12 +63,14 @@ Every GPIO bank is configured through a set of named **attributes** (registers).
 // Set attribute bits selected by mask
 void set_gpio_attr(const std::string& bank,
                    const std::string& attr,
-                   uint32_t value,
-                   uint32_t mask = 0xffffffff);
+                   const uint32_t value,
+                   const uint32_t mask = 0xffffffff,
+                   const size_t mboard = 0);
 
 // Read a full attribute register
 uint32_t get_gpio_attr(const std::string& bank,
-                       const std::string& attr);
+                       const std::string& attr,
+                       const size_t mboard = 0);
 ```
 
 The `mask` parameter is a bitmask that limits which bits are written. Bits that are `0` in the mask are left unchanged. This lets you update individual pins without disturbing others.

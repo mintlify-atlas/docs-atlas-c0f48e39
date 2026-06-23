@@ -1,5 +1,5 @@
 ---
-title: "UHD C API: Handles and Error Codes"
+title: "UHD C API: Opaque Handles, Error Codes, and Streaming"
 sidebarTitle: "C API"
 description: "Reference for UHD's C API — opaque handles, uhd_error codes, USRP make/free lifecycle, and RX/TX streaming functions compatible with any C99 project."
 ---
@@ -92,7 +92,7 @@ double gain;
 uhd_error err_code = uhd_usrp_get_rx_gain(usrp, 0, "", &gain);
 if (err_code != UHD_ERROR_NONE) {
     char msg[256];
-    uhd_usrp_get_last_error(usrp, msg, sizeof(msg));
+    uhd_usrp_last_error(usrp, msg, sizeof(msg));
     fprintf(stderr, "Error %d: %s\n", err_code, msg);
 }
 ```

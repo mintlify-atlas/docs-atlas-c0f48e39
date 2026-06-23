@@ -1,5 +1,5 @@
 ---
-title: "rx_streamer and tx_streamer API Reference"
+title: "UHD Streaming API: rx_streamer and tx_streamer Reference"
 sidebarTitle: "Streamers"
 description: "Full reference for UHD streamers: stream_args_t, rx_streamer, tx_streamer, and metadata types for receiving and transmitting IQ samples."
 ---
@@ -226,9 +226,14 @@ struct stream_cmd_t {
         STREAM_MODE_NUM_SAMPS_AND_MORE = 'm'  // stream N samples, expect another cmd
     } stream_mode;
 
-    uint64_t   num_samps;   // used with NUM_SAMPS modes
-    bool       stream_now;  // true = start immediately
-    time_spec_t time_spec;  // used when stream_now = false
+    uint64_t    num_samps;   // used with NUM_SAMPS modes
+    bool        stream_now;  // true = start immediately
+    time_spec_t time_spec;   // used when stream_now = false and trigger = TIMED
+
+    enum class trigger_t {
+        TIMED,      // start when time_spec is reached (default)
+        TX_RUNNING, // start when the transmitter is running
+    } trigger;
 };
 ```
 
@@ -245,7 +250,11 @@ struct stream_cmd_t {
 </ParamField>
 
 <ParamField path="time_spec" type="time_spec_t">
-  Time at which to begin streaming when `stream_now = false`. Must be in the future.
+  Time at which to begin streaming when `stream_now = false` and `trigger = TIMED`. Must be in the future.
+</ParamField>
+
+<ParamField path="trigger" type="trigger_t" default="TIMED">
+  Trigger source when `stream_now = false`. `TIMED` starts streaming when `time_spec` is reached; `TX_RUNNING` starts streaming when the transmitter is active.
 </ParamField>
 
 ```cpp
@@ -372,12 +381,14 @@ struct async_metadata_t {
 
 | Code | Value | Description |
 |---|---|---|
+| `EVENT_CODE_OK` | `0x0` | Status report with no error |
 | `EVENT_CODE_BURST_ACK` | `0x1` | Burst transmitted successfully |
 | `EVENT_CODE_UNDERFLOW` | `0x2` | TX buffer underflowed between packets |
 | `EVENT_CODE_SEQ_ERROR` | `0x4` | Packet loss between host and device |
 | `EVENT_CODE_TIME_ERROR` | `0x8` | Packet arrived late (time was in the past) |
 | `EVENT_CODE_UNDERFLOW_IN_PACKET` | `0x10` | Underflow occurred mid-packet |
 | `EVENT_CODE_SEQ_ERROR_IN_BURST` | `0x20` | Packet lost within a burst |
+| `EVENT_CODE_USER_PAYLOAD` | `0x40` | Custom payload from user-defined FPGA fabric |
 
 ```cpp
 // Poll async messages in a separate thread to catch TX errors

@@ -1,5 +1,5 @@
 ---
-title: "Discovering and Identifying USRP Devices with UHD"
+title: "Discovering and Identifying USRP Devices with UHD Driver"
 sidebarTitle: "Identification"
 description: "Learn how to find and identify USRP devices by serial number, IP address, type, name, or USB VID/PID using uhd_find_devices and the UHD API."
 ---
@@ -50,7 +50,7 @@ The `uhd_find_devices` utility scans your system for all supported USRP devices 
   </Step>
   <Step title="Combine filters">
     ```bash
-    uhd_find_devices --args="type=usrp1,name=lab1_xcvr"
+    uhd_find_devices --args="type=usrp1, name=lab1_xcvr"
     ```
   </Step>
 </Steps>

@@ -1,5 +1,5 @@
 ---
-title: "Configuring USRP Devices, Streamers, and Tuning"
+title: "Configuring USRP Devices: Streamers, Subdev, and Tuning"
 sidebarTitle: "Configuration"
 description: "Configure USRP devices via address string args, subdev specs, stream args, and two-stage RF/DSP tuning with tune_request_t in UHD."
 ---
@@ -51,7 +51,7 @@ The table below covers the most frequently used configuration options. Individua
 A subdev spec string tells UHD which daughterboard slot and frontend to activate on a given motherboard. The format is:
 
 ```
-<slot>:<frontend>
+<motherboard slot name>:<daughterboard frontend name>
 ```
 
 For example, to select a WBX daughterboard in slot B:
@@ -290,10 +290,14 @@ For MPM-based devices (N3xx, E320, E31x), additional defaults can be set in the 
 | Key | Description | Devices | Example |
 |---|---|---|---|
 | `enable_gps` | Power the GPSDO on/off | N3xx, E320 | `enable_gps=0` |
+| `enable_fp_gpio` | Enable/disable power to the front-panel GPIOs | N3xx, E320 | `enable_fp_gpio=0` |
 | `clock_source` | Default clock source | N3xx, E320, E31x | `clock_source=external` |
 | `time_source` | Default time source | N3xx, E320, E31x | `time_source=external` |
 | `rx_lo_source` | Default RX LO source | N310 | `rx_lo_source=external` |
 | `tx_lo_source` | Default TX LO source | N310 | `tx_lo_source=external` |
+| `pps_export` | Default PPS export value | N3xx | `pps_export=0` |
+| `forward_eth` | Set forwarding policy for Ethernet packets | N3xx | `forward_eth=1` |
+| `forward_bcast` | Set forwarding policy for broadcast packets | N3xx | `forward_bcast=1` |
 | `master_clock_rate` | Default master clock rate | N3xx, E320, E31x | `master_clock_rate=1e6` |
 | `skip_boot_init` | Defer device init to first UHD run | N3xx | `skip_boot_init=1` |
 | `no_reload_fpga` | Don't load idle image after session ends | E31x | `no_reload_fpga=1` |

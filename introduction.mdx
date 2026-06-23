@@ -33,7 +33,7 @@ UHD is officially built and tested on the following operating systems:
 | Operating System | Notes |
 |---|---|
 | **Linux** | Primary development platform; Fedora and Ubuntu distributions are explicitly tested |
-| **macOS** | Intel-based Macs are supported |
+| **Mac OS X** | Intel-based Macs are supported |
 | **Windows 10** | Fully supported; installers are provided by Ettus Research |
 
 Other POSIX-compatible operating systems will likely work but are not officially supported by Ettus Research.
@@ -76,12 +76,14 @@ UHD exposes three tiers of API to match different application needs:
 UHD-based USRP devices are supported natively by a broad ecosystem of SDR frameworks and commercial toolchains:
 
 - [**GNU Radio**](http://gnuradio.org/) — Flow-graph SDR toolkit with `gr-uhd` source and sink blocks
+- [**RFNoC OOT Blocks**](https://github.com/EttusResearch/rfnoc-oot-blocks) — Out-of-tree RFNoC signal-processing blocks for USRP Gen-3 and later devices
+- [**NI LabVIEW – UHD RFNoC**](https://github.com/ni/labview-usrp-examples) — LabVIEW FPGA integration examples for RFNoC-capable USRPs
+- [**NI LabVIEW**](https://www.ni.com/download/ni-usrp-1.3/4711/en/) — LabVIEW instruments and driver support for USRP hardware
 - [**MathWorks MATLAB & Simulink**](https://www.mathworks.com/discovery/sdr/usrp.html) — Hardware support package for USRP
-- [**Software Radio Systems srsRAN**](https://www.srsran.com/) — Open-source 4G/5G RAN stack
-- [**NI LabVIEW**](https://www.ni.com/download/ni-usrp-1.3/4711/en/) — LabVIEW instruments and RFNoC FPGA integration
 - [**REDHAWK**](https://redhawksdr.org/) — Government and defense SDR framework
-- [**Osmocom GSM**](https://osmocom.org) and [**OpenBTS**](http://openbts.org) — Open-source cellular infrastructure
-- [**Amarisoft LTE**](https://www.amarisoft.com/) — Commercial LTE/5G NR base-station software
+- [**OpenBTS**](http://openbts.org) and [**Osmocom GSM**](https://osmocom.org) — Open-source cellular infrastructure stacks
+- [**Amarisoft LTE**](https://www.amarisoft.com/products-lte-ue-ots-sdr-pcie) — Commercial LTE/5G NR base-station software
+- [**Software Radio Systems srsRAN**](https://www.srsran.com/) — Open-source 4G/5G RAN stack
 - [**Eurecom OpenAirInterface**](https://gitlab.eurecom.fr/oai/openairinterface5g) — Open-source 5G research platform
 
 <Note>
