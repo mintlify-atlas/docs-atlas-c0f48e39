@@ -1,0 +1,123 @@
+---
+title: "RFNoC: RF Network-on-Chip FPGA Framework"
+sidebarTitle: "Introduction"
+description: "RFNoC is Ettus Research's heterogeneous DSP framework for composing high-throughput FPGA and CPU SDR signal chains on USRP Gen 3+ hardware."
+---
+
+RFNoC (RF Network-on-Chip) is a heterogeneous processing framework designed to implement high-throughput DSP in the FPGA of Software Defined Radio systems. It lets engineers describe a DSP pipeline as a directed graph — with FPGA blocks, software streamers, and transports as nodes — and provides consistent interfaces so CPU-based host code and FPGA logic can be composed into a single application. RFNoC is supported on USRP devices generation 3 and later, including the X3xx, N3xx, X4xx, and E3xx series.
+
+## What is RFNoC?
+
+RFNoC implements DSP "flow graphs" where algorithms and IP blocks are nodes and the data flowing between them forms the edges. As a network-on-chip architecture, it abstracts the wiring of those nodes and edges and exposes seamless interfaces for both the FPGA fabric and the host software. Engineers can mix standard Ettus Research blocks (Radio, DDC, DUC, FFT, Replay, …) with custom user-authored blocks and assemble them into any topology allowed by the underlying hardware resources.
+
+## Core Components
+
+Every RFNoC flow graph is composed of four types of building blocks:
+
+<CardGroup cols={2}>
+  <Card title="NoC Block" icon="cube">
+    The core processing unit. Each NoC block wraps user logic — a radio interface, a DDC, an FFT, or custom DSP — behind a standard NoC Shell that provides separate control and data interfaces to the rest of the framework.
+  </Card>
+  <Card title="Stream Endpoint" icon="arrow-right-arrow-left">
+    The start or termination point of a unique sample stream. Stream endpoints can exist in the FPGA or in software. Flow control between endpoints allows streams to traverse any transport without modification.
+  </Card>
+  <Card title="Transport Adapter" icon="network-wired">
+    An abstraction over a physical transport — 10 GigE, PCIe, Aurora, USB — that lets RFNoC data flow between an FPGA and a host computer, or between two FPGAs, in a hardware-transparent way.
+  </Card>
+  <Card title="Routing Core" icon="shuffle">
+    The crossbar infrastructure connecting all other components. Comprises the CHDR Crossbar (full-mesh, full-bandwidth), the Control Crossbar (low-bandwidth), and an optional Static Router for fixed point-to-point connections.
+  </Card>
+</CardGroup>
+
+Each NoC block exposes two communication planes:
+
+- **Control plane** — a low-throughput, transaction-based interface for configuration and register access. All transactions are 32-bit wide and can be timed.
+- **Data plane** — a high-throughput AXI4-Stream interface for sample data, with optional per-packet timestamps and metadata.
+
+## CHDR Packet Format
+
+All traffic in an RFNoC network — data, control, flow control, and management — is packetized in the **Condensed Hierarchical Datagram for RFNoC (CHDR)** format. The CHDR bus width (`CHDR_W`) is a power-of-two value of at least 64 bits and is the same for all blocks in a given FPGA image.
+
+Every CHDR packet begins with a 64-bit header word that carries the following fields:
+
+| Field | Width | Description |
+|-------|-------|-------------|
+| `VC` | 6 bits | Virtual channel number for multiplexing multiple streams over one physical link |
+| `EOB` / `EOV` | 2 bits | End-of-Burst and End-of-Vector delimiter flags for user logic |
+| `PktType` | 3 bits | Packet type: `0x4` = Control, `0x6` = Data (no timestamp), `0x7` = Data (with timestamp) |
+| `NumMData` | 5 bits | Number of optional metadata words (each `CHDR_W` bits wide) |
+| `SeqNum` | 16 bits | Per-stream sequence number for gap detection |
+| `Length` | 16 bits | Total packet length in bytes |
+| `DstEPID` | 16 bits | Destination stream endpoint ID used for routing |
+
+An optional 64-bit **timestamp** follows the header when `PktType` is `0x7`, after which come up to 30 metadata words, and finally the payload. The first packet in a timed burst carries the timestamp; subsequent packets within the same burst do not require one because receivers can calculate intermediate times from the known sample rate.
+
+<Note>
+  The `CHDR_W` of all blocks in a single FPGA image must be identical. Valid values are 64, 128, 256, and 512 bits. Metadata is recommended to stay within 248 bytes for portability across all CHDR widths.
+</Note>
+
+## Supported Devices
+
+RFNoC is available on USRP hardware generation 3 and later:
+
+| Series | Representative Devices | Notes |
+|--------|----------------------|-------|
+| **X3xx** | X300, X310 | Original RFNoC-capable platform; 64-bit CHDR |
+| **N3xx** | N300, N310, N320 | Embedded RFNoC with Zynq SoC; supports 64-bit CHDR |
+| **E3xx** | E310, E320 | Embedded SOM-based USRP with integrated FPGA |
+| **X4xx** | X410, X440 | Latest generation; 256-bit CHDR; highest bandwidth |
+
+## Run-Time vs. Build-Time Reconfiguration
+
+RFNoC supports three levels of topology flexibility, and users must choose the right tradeoff for their application:
+
+<Tabs>
+  <Tab title="Run-Time Reconfiguration">
+    The graph topology can be changed dynamically at runtime by calling `connect()` and `commit()` in software without rebuilding the FPGA bitfile. The CHDR crossbar is used to route data between blocks dynamically. This offers the most flexibility but consumes more FPGA resources.
+  </Tab>
+  <Tab title="Build-Time Reconfiguration">
+    Block connections are hard-coded into the FPGA image at synthesis time via the Static Router. Changing a connection requires a new bitfile build. This uses fewer resources than a fully dynamic crossbar and is suitable for production designs.
+  </Tab>
+  <Tab title="No Reconfiguration">
+    Some connections — particularly between a NoC block and USRP hardware IO (ADC, DAC, memory interfaces) — are fixed by the hardware design and cannot be changed at all.
+  </Tab>
+</Tabs>
+
+## Typical Workflow
+
+Building an RFNoC application follows this overall process:
+
+<Steps>
+  <Step title="Partition the problem">
+    Decide which parts of your DSP algorithm run in the FPGA and which run on the host CPU.
+  </Step>
+  <Step title="Identify or create blocks">
+    Determine whether the needed FPGA functions are already available as in-tree Ettus Research blocks, out-of-tree community blocks, or need to be authored from scratch with RFNoC ModTool.
+  </Step>
+  <Step title="Implement custom blocks">
+    Use `rfnoc_modtool` to scaffold HDL, C++ controller, testbench, and metadata files for any new blocks.
+  </Step>
+  <Step title="Assemble the FPGA image">
+    Use `rfnoc_image_builder` with a YAML configuration file to generate and synthesize an FPGA bitfile that contains all required blocks and their static connections.
+  </Step>
+  <Step title="Write the host application">
+    Use the `uhd::rfnoc::rfnoc_graph` C++ API (or Python bindings) to discover blocks, connect them dynamically, create streamers, and run the application.
+  </Step>
+</Steps>
+
+## Learn More
+
+<CardGroup cols={2}>
+  <Card title="Software Architecture" icon="code" href="/rfnoc/software-architecture">
+    Block controllers, properties, graph API, streamers, and built-in block types.
+  </Card>
+  <Card title="Block Development" icon="hammer" href="/rfnoc/block-development">
+    How to design and implement a custom RFNoC FPGA block and its C++ controller.
+  </Card>
+  <Card title="Image Builder" icon="wrench" href="/rfnoc/image-builder">
+    Assembling a custom FPGA bitfile from block definitions using the Image Builder tool.
+  </Card>
+  <Card title="ModTool" icon="terminal" href="/rfnoc/modtool">
+    Scaffolding all files for a new block in seconds with RFNoC ModTool.
+  </Card>
+</CardGroup>

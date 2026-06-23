@@ -1,0 +1,417 @@
+---
+title: "UHD C API: Handles and Error Codes"
+sidebarTitle: "C API"
+description: "Reference for UHD's C API — opaque handles, uhd_error codes, USRP make/free lifecycle, and RX/TX streaming functions compatible with any C99 project."
+---
+
+UHD provides a C API wrapper that exposes the core functionality of `uhd::usrp::multi_usrp` and its associated streamer and metadata classes to C programs. Every C++ exception is caught at the boundary and translated into a `uhd_error` return code, making the API safe to call from C, Rust, MATLAB, LabVIEW, and any other language that can interface with a C library.
+
+```c
+#include <uhd.h>
+```
+
+This single header includes all USRP, streamer, metadata, types, and error declarations.
+
+---
+
+## Handle Pattern
+
+Every UHD object that is accessed from C is represented by an opaque **handle** — a typed pointer to an internal C++ object. The lifecycle of every handle follows the same three-step pattern:
+
+1. **Declare** the handle variable.
+2. **Make** it via the `*_make()` function before any use.
+3. **Free** it via the `*_free()` function when done.
+
+Using a handle before calling `make()` causes undefined behavior. Using a handle after calling `free()` causes a segmentation fault.
+
+```c
+// Example: RX metadata handle lifecycle
+uhd_rx_metadata_handle md;
+uhd_rx_metadata_make(&md);
+
+// ... use md ...
+
+uhd_rx_metadata_free(&md);
+```
+
+### Handle Types
+
+| Handle | C++ Equivalent |
+|---|---|
+| `uhd_usrp_handle` | `uhd::usrp::multi_usrp` |
+| `uhd_rx_streamer_handle` | `uhd::rx_streamer` |
+| `uhd_tx_streamer_handle` | `uhd::tx_streamer` |
+| `uhd_rx_metadata_handle` | `uhd::rx_metadata_t` |
+| `uhd_tx_metadata_handle` | `uhd::tx_metadata_t` |
+| `uhd_async_metadata_handle` | `uhd::async_metadata_t` |
+
+---
+
+## Error Codes
+
+Every C API function returns a `uhd_error` value. A return value of `UHD_ERROR_NONE` (0) indicates success. Any other value means a C++ exception was thrown internally.
+
+```c
+typedef enum {
+    UHD_ERROR_NONE             = 0,
+    UHD_ERROR_INVALID_DEVICE   = 1,
+    UHD_ERROR_INDEX            = 10,
+    UHD_ERROR_KEY              = 11,
+    UHD_ERROR_NOT_IMPLEMENTED  = 20,
+    UHD_ERROR_USB              = 21,
+    UHD_ERROR_IO               = 30,
+    UHD_ERROR_OS               = 31,
+    UHD_ERROR_ASSERTION        = 40,
+    UHD_ERROR_LOOKUP           = 41,
+    UHD_ERROR_TYPE             = 42,
+    UHD_ERROR_VALUE            = 43,
+    UHD_ERROR_RUNTIME          = 44,
+    UHD_ERROR_ENVIRONMENT      = 45,
+    UHD_ERROR_SYSTEM           = 46,
+    UHD_ERROR_EXCEPT           = 47,
+    UHD_ERROR_BOOSTEXCEPT      = 60,
+    UHD_ERROR_STDEXCEPT        = 70,
+    UHD_ERROR_UNKNOWN          = 100
+} uhd_error;
+```
+
+### Retrieving Error Strings
+
+Every handle stores the string representation of the last exception thrown internally. Use `*_get_last_error()` to retrieve it:
+
+```c
+// Global last error (for functions that don't take a handle)
+char err[256];
+uhd_get_last_error(err, sizeof(err));
+
+// Per-handle last error
+uhd_usrp_handle usrp;
+uhd_usrp_make(&usrp, "type=b200");
+
+double gain;
+uhd_error err_code = uhd_usrp_get_rx_gain(usrp, 0, "", &gain);
+if (err_code != UHD_ERROR_NONE) {
+    char msg[256];
+    uhd_usrp_get_last_error(usrp, msg, sizeof(msg));
+    fprintf(stderr, "Error %d: %s\n", err_code, msg);
+}
+```
+
+---
+
+## USRP Lifecycle
+
+### `uhd_usrp_make()`
+
+```c
+uhd_error uhd_usrp_make(uhd_usrp_handle* h, const char* args);
+```
+
+Creates and connects to a USRP device. `args` is a comma-separated key=value string (e.g., `"type=b200"`, `"addr=192.168.10.2"`, or `""` for auto-detect).
+
+### `uhd_usrp_free()`
+
+```c
+uhd_error uhd_usrp_free(uhd_usrp_handle* h);
+```
+
+Releases the USRP device and frees associated memory.
+
+### `uhd_usrp_find()`
+
+```c
+uhd_error uhd_usrp_find(const char* args, uhd_string_vector_handle* strings_out);
+```
+
+Discovers all connected USRP devices matching `args`. Results are written into `strings_out`.
+
+---
+
+## Streamer Functions
+
+### Creating Streamers
+
+```c
+// Make/free the streamer handles first
+uhd_error uhd_rx_streamer_make(uhd_rx_streamer_handle* h);
+uhd_error uhd_rx_streamer_free(uhd_rx_streamer_handle* h);
+
+uhd_error uhd_tx_streamer_make(uhd_tx_streamer_handle* h);
+uhd_error uhd_tx_streamer_free(uhd_tx_streamer_handle* h);
+
+// Then attach to a USRP using stream args
+uhd_error uhd_usrp_get_rx_stream(uhd_usrp_handle h,
+                                  uhd_stream_args_t* stream_args,
+                                  uhd_rx_streamer_handle h_out);
+
+uhd_error uhd_usrp_get_tx_stream(uhd_usrp_handle h,
+                                  uhd_stream_args_t* stream_args,
+                                  uhd_tx_streamer_handle h_out);
+```
+
+The `uhd_stream_args_t` struct mirrors `uhd::stream_args_t`:
+
+```c
+typedef struct {
+    char*   cpu_format;    // e.g. "fc32"
+    char*   otw_format;    // e.g. "sc16"
+    char*   args;          // e.g. "spp=200"
+    size_t* channel_list;  // array of channel indices
+    int     n_channels;    // length of channel_list
+} uhd_stream_args_t;
+```
+
+### `uhd_rx_streamer_recv()`
+
+```c
+uhd_error uhd_rx_streamer_recv(
+    uhd_rx_streamer_handle h,
+    void**                 buffs,
+    size_t                 samps_per_buff,
+    uhd_rx_metadata_handle* md,
+    double                 timeout,
+    bool                   one_packet,
+    size_t*                items_recvd);
+```
+
+Receives samples into `buffs`. On return, `*items_recvd` holds the number of samples received per channel.
+
+### `uhd_tx_streamer_send()`
+
+```c
+uhd_error uhd_tx_streamer_send(
+    uhd_tx_streamer_handle h,
+    const void**           buffs,
+    size_t                 samps_per_buff,
+    uhd_tx_metadata_handle* md,
+    double                 timeout,
+    size_t*                items_sent);
+```
+
+Sends samples from `buffs`. On return, `*items_sent` holds the number of samples sent per channel.
+
+### `uhd_rx_streamer_issue_stream_cmd()`
+
+```c
+uhd_error uhd_rx_streamer_issue_stream_cmd(
+    uhd_rx_streamer_handle h,
+    const uhd_stream_cmd_t* stream_cmd);
+```
+
+```c
+typedef struct {
+    uhd_stream_mode_t stream_mode;
+    size_t            num_samps;
+    bool              stream_now;
+    int64_t           time_spec_full_secs;
+    double            time_spec_frac_secs;
+} uhd_stream_cmd_t;
+```
+
+---
+
+## RF Configuration Functions
+
+### Frequency
+
+```c
+uhd_error uhd_usrp_set_rx_freq(uhd_usrp_handle h,
+                                uhd_tune_request_t* tune_request,
+                                size_t chan,
+                                uhd_tune_result_t* tune_result);
+
+uhd_error uhd_usrp_get_rx_freq(uhd_usrp_handle h, size_t chan, double* freq_out);
+
+uhd_error uhd_usrp_set_tx_freq(uhd_usrp_handle h,
+                                uhd_tune_request_t* tune_request,
+                                size_t chan,
+                                uhd_tune_result_t* tune_result);
+
+uhd_error uhd_usrp_get_tx_freq(uhd_usrp_handle h, size_t chan, double* freq_out);
+```
+
+### Gain
+
+```c
+uhd_error uhd_usrp_set_rx_gain(uhd_usrp_handle h, double gain,
+                                size_t chan, const char* gain_name);
+
+uhd_error uhd_usrp_get_rx_gain(uhd_usrp_handle h, size_t chan,
+                                const char* gain_name, double* gain_out);
+
+uhd_error uhd_usrp_set_tx_gain(uhd_usrp_handle h, double gain,
+                                size_t chan, const char* gain_name);
+
+uhd_error uhd_usrp_get_tx_gain(uhd_usrp_handle h, size_t chan,
+                                const char* gain_name, double* gain_out);
+```
+
+Pass `""` for `gain_name` to set/get the aggregate gain across all stages.
+
+### Sample Rate
+
+```c
+uhd_error uhd_usrp_set_rx_rate(uhd_usrp_handle h, double rate, size_t chan);
+uhd_error uhd_usrp_get_rx_rate(uhd_usrp_handle h, size_t chan, double* rate_out);
+
+uhd_error uhd_usrp_set_tx_rate(uhd_usrp_handle h, double rate, size_t chan);
+uhd_error uhd_usrp_get_tx_rate(uhd_usrp_handle h, size_t chan, double* rate_out);
+```
+
+### Clocking
+
+```c
+uhd_error uhd_usrp_set_clock_source(uhd_usrp_handle h,
+                                     const char* clock_source, size_t mboard);
+uhd_error uhd_usrp_set_time_source(uhd_usrp_handle h,
+                                    const char* time_source, size_t mboard);
+uhd_error uhd_usrp_set_time_now(uhd_usrp_handle h,
+                                 int64_t full_secs, double frac_secs, size_t mboard);
+uhd_error uhd_usrp_set_time_next_pps(uhd_usrp_handle h,
+                                      int64_t full_secs, double frac_secs, size_t mboard);
+```
+
+### Sensors
+
+```c
+uhd_error uhd_usrp_get_mboard_sensor(uhd_usrp_handle h,
+                                      const char* name,
+                                      size_t mboard,
+                                      uhd_sensor_value_handle* sensor_value_out);
+```
+
+---
+
+## Complete RX Streaming Example
+
+The following program opens a USRP, configures the receiver, and captures 1000 complex float samples:
+
+```c
+#include <uhd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <complex.h>
+
+#define CHECK(call)                                              \
+    do {                                                         \
+        uhd_error _e = (call);                                   \
+        if (_e != UHD_ERROR_NONE) {                              \
+            fprintf(stderr, "UHD error %d at %s:%d\n",          \
+                    _e, __FILE__, __LINE__);                     \
+            exit(1);                                             \
+        }                                                        \
+    } while (0)
+
+int main(void) {
+    uhd_usrp_handle usrp;
+    CHECK(uhd_usrp_make(&usrp, "type=b200"));
+
+    /* Configure RF */
+    CHECK(uhd_usrp_set_rx_rate(usrp, 1e6, 0));
+
+    uhd_tune_request_t tune_req = {
+        .target_freq       = 915e6,
+        .rf_freq_policy    = UHD_TUNE_REQUEST_POLICY_AUTO,
+        .dsp_freq_policy   = UHD_TUNE_REQUEST_POLICY_AUTO,
+    };
+    uhd_tune_result_t tune_result;
+    CHECK(uhd_usrp_set_rx_freq(usrp, &tune_req, 0, &tune_result));
+    CHECK(uhd_usrp_set_rx_gain(usrp, 40.0, 0, ""));
+
+    /* Create streamer */
+    uhd_rx_streamer_handle rx_streamer;
+    CHECK(uhd_rx_streamer_make(&rx_streamer));
+
+    size_t channel = 0;
+    uhd_stream_args_t stream_args = {
+        .cpu_format   = "fc32",
+        .otw_format   = "sc16",
+        .args         = "",
+        .channel_list = &channel,
+        .n_channels   = 1,
+    };
+    CHECK(uhd_usrp_get_rx_stream(usrp, &stream_args, rx_streamer));
+
+    /* Issue stream command */
+    uhd_stream_cmd_t stream_cmd = {
+        .stream_mode = UHD_STREAM_MODE_START_CONTINUOUS,
+        .stream_now  = true,
+    };
+    CHECK(uhd_rx_streamer_issue_stream_cmd(rx_streamer, &stream_cmd));
+
+    /* Allocate receive buffer (complex float = 2 x float) */
+    const size_t num_samps = 1000;
+    float *buf = malloc(num_samps * 2 * sizeof(float));
+
+    /* Create metadata handle */
+    uhd_rx_metadata_handle md;
+    CHECK(uhd_rx_metadata_make(&md));
+
+    /* Receive */
+    void *buffs_ptr[] = { buf };
+    size_t items_recvd = 0;
+    CHECK(uhd_rx_streamer_recv(
+        rx_streamer, buffs_ptr, num_samps, &md, 3.0, false, &items_recvd));
+
+    printf("Received %zu samples\n", items_recvd);
+
+    /* Inspect metadata */
+    uhd_rx_metadata_error_code_t error_code;
+    uhd_rx_metadata_error_code(md, &error_code);
+    if (error_code != UHD_RX_METADATA_ERROR_CODE_NONE) {
+        char err_str[512];
+        uhd_rx_metadata_strerror(md, err_str, sizeof(err_str));
+        fprintf(stderr, "RX error: %s\n", err_str);
+    }
+
+    /* Stop streaming */
+    uhd_stream_cmd_t stop_cmd = {
+        .stream_mode = UHD_STREAM_MODE_STOP_CONTINUOUS,
+        .stream_now  = true,
+    };
+    uhd_rx_streamer_issue_stream_cmd(rx_streamer, &stop_cmd);
+
+    /* Cleanup */
+    free(buf);
+    uhd_rx_metadata_free(&md);
+    uhd_rx_streamer_free(&rx_streamer);
+    uhd_usrp_free(&usrp);
+    return 0;
+}
+```
+
+Build with:
+
+```bash
+gcc rx_example.c -o rx_example -luhd
+```
+
+---
+
+## Thread Safety
+
+<Warning>
+The C API inherits the thread-safety constraints of the underlying C++ objects:
+
+- `uhd_rx_streamer_recv()` is **not thread-safe** on a single handle. Only one thread may call `recv()` on the same streamer at a time.
+- `uhd_tx_streamer_send()` is **not thread-safe** on a single handle. Only one thread may call `send()` on the same streamer at a time.
+- Multiple handles in separate threads may be used independently and concurrently.
+- USRP configuration functions (`set_rx_freq`, `set_rx_gain`, etc.) should not be called concurrently with streaming on the same handle without external synchronization.
+</Warning>
+
+---
+
+## Linking
+
+| Platform | Linker Flag |
+|---|---|
+| Linux / macOS | `-luhd` |
+| Windows (MSVC) | Link against `uhd.lib` |
+| pkg-config | `pkg-config --libs uhd` |
+
+```bash
+# CMake integration
+find_package(UHD REQUIRED)
+target_link_libraries(my_app PRIVATE UHD::UHD)
+```

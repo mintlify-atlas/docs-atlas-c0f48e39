@@ -1,0 +1,207 @@
+---
+title: "Multi-USRP Configuration for MIMO and Array Systems"
+sidebarTitle: "Multi-USRP"
+description: "Combine multiple USRP devices into a single logical device for MIMO operation, synchronized streaming, and large-scale RF arrays."
+---
+
+Several USRP product families support multi-device operation: multiple physical units can be combined into a single `uhd::usrp::multi_usrp` instance, letting your application treat them as one larger radio. Channels from every device appear in a flat, ordered channel list, and sample alignment between devices is handled automatically when you request a multi-channel streamer. Only devices of the same type can be combined, and all must share a common time and frequency reference for accurate MIMO operation.
+
+## Supported Devices
+
+<Note>
+Only USRPs of the same type may be grouped. You cannot mix an X310 with an N310 in the same multi-device setup.
+</Note>
+
+The following product families currently support multi-device configurations:
+
+| Device Family | Connection Method |
+|---|---|
+| USRP2 / N2x0 | MIMO cable (2 devices) or OctoClock |
+| X3x0 Series | Daisy-chain (small arrays) or OctoClock |
+| N3x0 Series | OctoClock or external reference |
+| X4x0 Series | OctoClock or external reference |
+
+## Setting Up Multiple Devices
+
+Address multiple devices by appending numbered `addr` keys to your device argument string. The first device is `addr0`, the second is `addr1`, and so on:
+
+```
+addr0=192.168.10.2,addr1=192.168.20.2
+```
+
+<Steps>
+  <Step title="Construct the address string">
+    List each device's IP address (or serial number) as `addr0`, `addr1`, … in a single comma-separated argument string.
+  </Step>
+  <Step title="Instantiate multi_usrp">
+    Pass the combined address string to `uhd::usrp::multi_usrp::make()`:
+
+    ```cpp
+    uhd::device_addr_t args("addr0=192.168.10.2,addr1=192.168.20.2");
+    uhd::usrp::multi_usrp::sptr usrp = uhd::usrp::multi_usrp::make(args);
+    ```
+  </Step>
+  <Step title="Verify device count">
+    Confirm both devices were found and check their clock rates:
+
+    ```cpp
+    double mcr0 = usrp->get_master_clock_rate(0); // device index 0
+    double mcr1 = usrp->get_master_clock_rate(1); // device index 1
+    std::cout << "Device 0 clock: " << mcr0 / 1e6 << " MHz\n";
+    std::cout << "Device 1 clock: " << mcr1 / 1e6 << " MHz\n";
+    ```
+  </Step>
+  <Step title="Set a common time base">
+    Synchronize all devices to the same time reference on the next PPS edge:
+
+    ```cpp
+    // Sets time to 0.0 on ALL devices at the next PPS pulse
+    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    ```
+
+    Methods that accept an `mboard` parameter default to `ALL_MBOARDS`, so this single call applies to every device in the configuration.
+  </Step>
+</Steps>
+
+## Channel and Device Numbering
+
+Channels are numbered sequentially across all devices. The mapping is determined by the subdev spec of each device.
+
+### Default Channel Mapping
+
+For two X310 USRPs each loaded with two daughterboards, the default mapping is:
+
+| Channel | Physical Location |
+|---------|-------------------|
+| 0 | Slot A, Device 0 |
+| 1 | Slot B, Device 0 |
+| 2 | Slot A, Device 1 |
+| 3 | Slot B, Device 1 |
+
+### Device Index vs. Channel Index
+
+Some API calls take a **device index** (`mboard`), others take a **channel index**:
+
+```cpp
+// Device-indexed: query per motherboard
+double mcr0 = usrp->get_master_clock_rate(0); // mboard = 0
+double mcr1 = usrp->get_master_clock_rate(1); // mboard = 1
+
+// Channel-indexed: tune each RF frontend
+usrp->set_rx_freq(2.4e9, 0); // channel 0 → Slot A, Device 0
+usrp->set_rx_freq(2.4e9, 1); // channel 1 → Slot B, Device 0
+usrp->set_rx_freq(2.4e9, 2); // channel 2 → Slot A, Device 1
+usrp->set_rx_freq(2.4e9, 3); // channel 3 → Slot B, Device 1
+```
+
+## Subdev Spec and Channel Reordering
+
+The subdev spec controls which daughterboard slots are active and in what order they appear in the channel list. Call `set_rx_subdev_spec()` without a device index to apply the same spec to all devices—this is strongly recommended:
+
+```cpp
+// Apply identical spec to all devices (recommended)
+usrp->set_rx_subdev_spec("A:0 B:0");
+```
+
+You can also set per-device specs, but this requires careful bookkeeping:
+
+```cpp
+// Per-device specs: use with caution, document thoroughly
+usrp->set_rx_subdev_spec("A:0 B:0", 0); // Device 0: two channels, A then B
+usrp->set_rx_subdev_spec("A:0",     1); // Device 1: one channel, slot A only
+usrp->set_rx_subdev_spec("B:0 A:0", 2); // Device 2: two channels, B then A (reversed)
+```
+
+With this configuration across three devices the total channel count is 5 and the mapping becomes:
+
+| Channel | Physical Location |
+|---------|-------------------|
+| 0 | Slot A, Device 0 |
+| 1 | Slot B, Device 0 |
+| 2 | Slot A, Device 1 |
+| 3 | Slot A, Device 2 (B:0 comes first on device 2) |
+| 4 | Slot B, Device 2 |
+
+<Warning>
+Per-device subdev specs that differ in slot order are valid but easily misread. Unless you have a specific reason to reorder slots, always use the same spec across all devices.
+</Warning>
+
+## MIMO Operation
+
+When you create a multi-channel streamer from a multi-device `multi_usrp`, UHD automatically enables MIMO mode and aligns samples across all channels using their timestamps.
+
+```cpp
+// Request all 4 channels from a 2x X310 setup
+uhd::stream_args_t stream_args("fc32", "sc16");
+stream_args.channels = {0, 1, 2, 3};
+uhd::rx_streamer::sptr rx_stream = usrp->get_rx_stream(stream_args);
+
+// Issue a timed stream command so all channels start together
+uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+cmd.stream_now = false;
+cmd.time_spec  = usrp->get_time_now() + 0.1; // start 100 ms from now
+rx_stream->issue_stream_cmd(cmd);
+```
+
+<Tip>
+For reliable alignment the first stream command should always use `stream_now = false` with a time slightly in the future. This gives all devices time to receive the command before execution begins.
+</Tip>
+
+### Reference Distribution Options
+
+<Accordion title="Daisy-chain (X-Series, small arrays)">
+X310 and X410 devices can be daisy-chained using their REF IN / REF OUT connectors. This works for a small number of devices (typically 2–4) without external hardware.
+</Accordion>
+
+<Accordion title="MIMO cable (N2x0 only, 2 devices)">
+The N200/N210 MIMO cable carries both the 10 MHz reference and the PPS signal between exactly two devices. It is the simplest option when you have exactly two N2x0 units.
+</Accordion>
+
+<Accordion title="OctoClock (any device family)">
+The OctoClock distributes a 10 MHz reference and PPS signal to up to 8 devices simultaneously. It is the recommended approach for arrays of three or more devices, and for mixing devices that lack a direct daisy-chain path.
+</Accordion>
+
+## Complete Example
+
+The following snippet shows the full workflow for a two-X310 MIMO receiver:
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+#include <uhd/types/time_spec.hpp>
+#include <iostream>
+
+int main() {
+    // 1. Create multi-device handle
+    uhd::device_addr_t args("addr0=192.168.10.2,addr1=192.168.20.2");
+    auto usrp = uhd::usrp::multi_usrp::make(args);
+
+    // 2. Configure RF on all four channels
+    for (size_t ch = 0; ch < usrp->get_rx_num_channels(); ch++) {
+        usrp->set_rx_rate(10e6, ch);
+        usrp->set_rx_freq(2.45e9, ch);
+        usrp->set_rx_gain(30, ch);
+        usrp->set_rx_antenna("RX2", ch);
+    }
+
+    // 3. Synchronize clocks on the next PPS edge
+    usrp->set_clock_source("external");
+    usrp->set_time_source("external");
+    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // wait for PPS
+
+    // 4. Create a 4-channel streamer
+    uhd::stream_args_t st_args("fc32", "sc16");
+    st_args.channels = {0, 1, 2, 3};
+    auto rx_stream = usrp->get_rx_stream(st_args);
+
+    // 5. Start aligned streaming
+    uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+    cmd.stream_now = false;
+    cmd.time_spec  = usrp->get_time_now() + 0.1;
+    rx_stream->issue_stream_cmd(cmd);
+
+    std::cout << "Streaming " << rx_stream->get_num_channels()
+              << " aligned channels." << std::endl;
+    return 0;
+}
+```

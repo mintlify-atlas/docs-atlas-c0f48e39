@@ -1,0 +1,186 @@
+---
+title: "Using Timed Commands for Scheduled RF Configuration"
+sidebarTitle: "Timed Commands"
+description: "Schedule RF configuration changes and sample streaming at exact future times using UHD's timed command API and stream command timestamps."
+---
+
+Timed commands let you instruct a USRP to execute an action—start streaming, change frequency, adjust gain, switch antenna—at a specific future time rather than immediately. Because the timing is enforced by the FPGA, the latency jitter is bounded by the device's master clock period rather than by host OS scheduling. This makes timed commands essential for frequency hopping, coordinated multi-channel starts, and protocol-level TX/RX switching.
+
+There are two distinct flavors of timed commands in UHD: **stream commands** (which control when samples flow) and **general timed commands** (which schedule RF configuration changes).
+
+## Stream Commands with Timestamps
+
+<Tabs>
+  <Tab title="Timed RX Start">
+    Attach a `time_spec` to a stream command to start capturing samples at a precise moment. Set `stream_now = false` to arm the timed start:
+
+    ```cpp
+    using namespace uhd;
+    auto usrp = usrp::multi_usrp::make("");
+    // Configure frequency, gain, rate, etc. here
+
+    uhd::stream_args_t st_args("fc32", "sc16");
+    auto rx_stream = usrp->get_rx_stream(st_args);
+    rx_metadata_t md{};
+
+    // Read the current device time
+    auto time_now = usrp->get_time_now();
+
+    // Build a timed stream command
+    stream_cmd_t stream_cmd(stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+    stream_cmd.stream_now = false;          // enable timed mode
+    stream_cmd.time_spec  = time_now + 1.0; // start exactly 1 s from now
+
+    rx_stream->issue_stream_cmd(stream_cmd);
+
+    // Allow at least 1 s for the start time to arrive
+    const double timeout = 2.0;
+    size_t num_recvd = rx_stream->recv(buffs, nsamps_per_buff, md, timeout);
+    // md.time_spec will match the requested start time for the first packet
+    ```
+
+    <Note>
+    The metadata object returned by `recv()` will carry a `time_spec` matching the requested start time. Use it to verify the alignment was honored.
+    </Note>
+  </Tab>
+  <Tab title="Timed TX Burst">
+    Attach a timestamp to the TX metadata to defer transmission until that time. The USRP buffers the samples internally:
+
+    ```cpp
+    using namespace uhd;
+    auto usrp = usrp::multi_usrp::make("");
+    // Configure frequency, gain, rate, etc. here
+
+    uhd::stream_args_t st_args("fc32", "sc16");
+    auto tx_stream = usrp->get_tx_stream(st_args);
+    tx_metadata_t md{};
+
+    md.has_time_spec     = true;
+    md.time_spec         = usrp->get_time_now() + 1.0; // transmit 1 s from now
+    md.start_of_burst    = true;
+    md.end_of_burst      = false;
+
+    // Samples are queued; the USRP releases them at the specified time
+    tx_stream->send(buffs, nsamps_per_buff, md);
+    ```
+  </Tab>
+</Tabs>
+
+## General Timed Commands
+
+Unlike stream commands, general timed commands schedule RF configuration changes: gain, frequency, antenna, and GPIO. Call `set_command_time()` before the commands you want deferred, then call `clear_command_time()` immediately after to ensure subsequent commands execute normally.
+
+```cpp
+using namespace uhd;
+auto usrp = usrp::multi_usrp::make("");
+// Configure the USRP first (frequency, gain, etc.)
+
+// All commands issued after this call will be queued for 1 s in the future
+usrp->set_command_time(usrp->get_time_now() + 1.0);
+
+// These commands are placed into the FPGA command queue:
+usrp->set_tx_freq(1.0e9);  // Tune TX to 1 GHz at t+1 s
+usrp->set_tx_gain(40);     // Set TX gain to 40 dB at t+1 s
+
+// Clear command time: commands from here on execute immediately
+usrp->clear_command_time();
+
+// This next command is NOT deferred:
+usrp->set_tx_gain(30);     // Takes effect as soon as FPGA processes it
+```
+
+<Warning>
+Always call `clear_command_time()` after submitting your deferred commands. Forgetting to clear will cause every subsequent API call—including ones you intend to be immediate—to be queued for the previously set time.
+</Warning>
+
+### API Reference
+
+| Function | Signature | Description |
+|---|---|---|
+| `set_command_time` | `set_command_time(const uhd::time_spec_t& time_spec, size_t mboard = ALL_MBOARDS)` | Queue subsequent commands for execution at `time_spec` |
+| `clear_command_time` | `clear_command_time(size_t mboard = ALL_MBOARDS)` | Return to immediate execution mode |
+| `get_time_now` | `get_time_now(size_t mboard = 0)` | Read the current device time |
+
+### Supported Commands
+
+The set of commands that can be timed depends on the underlying device and, for RFNoC devices, on the specific RFNoC block receiving the command. Typical commands that support timed execution include:
+
+<Accordion title="RF configuration commands">
+- `set_rx_freq()` — retune RX center frequency
+- `set_tx_freq()` — retune TX center frequency
+- `set_rx_gain()` — adjust RX gain
+- `set_tx_gain()` — adjust TX gain
+- `set_rx_antenna()` — switch RX antenna port
+- `set_tx_antenna()` — switch TX antenna port
+</Accordion>
+
+<Accordion title="GPIO commands">
+Toggling GPIO lines on a precise schedule is supported for devices that expose GPIO through the RFNoC command path. This enables bit-banging serial protocols or hardware trigger generation with sub-microsecond timing precision.
+</Accordion>
+
+<Note>
+Refer to each device's manual page to confirm which commands are timed on that platform. Commands unsupported for timed operation on a given device may be executed immediately regardless of the command time setting.
+</Note>
+
+## Command Queues
+
+Every command destined for the USRP is placed into a hardware command queue in the FPGA. Key behaviors to understand:
+
+- **Serial execution:** Commands are always executed in the order they arrive, never reordered.
+- **Late commands execute immediately:** If the command time is already in the past when the FPGA processes the command, it executes as soon as it is dequeued.
+- **No reordering:** If you submit a command for `t=10 s` and then one for `t=5 s`, the second command will still run after the first—it will not be re-sorted.
+- **Back-pressure:** When the queue is full, UHD blocks until the FPGA signals available space. If this happens close to the desired command time, the command may arrive late.
+
+<Tip>
+For RFNoC devices (X410, X440, etc.) each RFNoC block has its own independent command queue, which reduces back-pressure risk when commands target different blocks simultaneously.
+</Tip>
+
+## Command Time Resolution
+
+Command times are stored as `uhd::time_spec_t` but converted to a 64-bit tick count before being sent to the FPGA. The resolution is therefore limited to one tick of the device's master clock:
+
+| Device | Master Clock Rate | Timing Resolution |
+|--------|-------------------|-------------------|
+| X310 | 200 MHz | 5 ns |
+| X410 | 250 MHz | 4 ns |
+| X440 | 500 MHz (internal: 62.5 MHz) | 16 ns effective |
+
+A requested command time that falls between two ticks is rounded to the nearest tick. For example, at 200 MHz a command time of `2.000000001 s` would be rounded to exactly `2.000000000 s`.
+
+<Note>
+The X440 operates at 500 MHz externally but processes commands on a 62.5 MHz internal clock (8 samples per clock edge), giving an effective timing granularity of 16 ns regardless of the nominal clock rate.
+</Note>
+
+## Frequency Hopping Example
+
+The following example uses timed commands to implement a simple two-step frequency hop on a TX channel:
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+#include <uhd/types/time_spec.hpp>
+
+int main() {
+    auto usrp = uhd::usrp::multi_usrp::make("type=x300");
+    usrp->set_tx_rate(10e6);
+    usrp->set_tx_gain(30);
+
+    // Synchronize device time
+    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    auto t0 = usrp->get_time_now();
+
+    // Hop 1: tune to 2.4 GHz at t0 + 1.0 s
+    usrp->set_command_time(t0 + 1.0);
+    usrp->set_tx_freq(2.4e9);
+    usrp->clear_command_time();
+
+    // Hop 2: tune to 5.8 GHz at t0 + 2.0 s
+    usrp->set_command_time(t0 + 2.0);
+    usrp->set_tx_freq(5.8e9);
+    usrp->clear_command_time();
+
+    // Transmission code follows...
+    return 0;
+}
+```

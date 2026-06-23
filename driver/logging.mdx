@@ -1,0 +1,304 @@
+---
+title: "UHD Logging System: Configuring Levels and Backends"
+sidebarTitle: "Logging"
+description: "Set UHD log levels for console and file backends via environment variables or CMake flags; use the runtime C++ API and logging macros in custom extensions."
+---
+
+UHD's logging subsystem captures diagnostic messages generated throughout the driver stack — from device initialization and LO locking through streaming and error recovery — and routes them to one or more configurable backends. Every log entry is time-stamped and tagged with the source file, line number, thread ID, and the component that produced it, making it straightforward to trace exactly what the driver is doing and when.
+
+<Note>
+UHD **never** prints anything to `stdout`. All logging output goes to `stderr` (technically `std::clog`) via the console backend, or to a log file via the file backend. This means your application's standard output stream is always free for structured data.
+</Note>
+
+Everything logging-related is declared in `include/uhd/utils/log.hpp`.
+
+## Log Levels
+
+UHD defines six severity levels as numeric constants in `uhd::log::severity_level`. Higher numbers indicate higher severity. When you configure a log level threshold, all messages at that level **and above** are passed through.
+
+<CardGroup cols={3}>
+  <Card title="trace (0)" icon="magnifying-glass">
+    Extremely verbose. Logs current execution state, local variable values, and control flow. Use only for deep debugging.
+  </Card>
+  <Card title="debug (1)" icon="bug">
+    Useful for debugging erroneous behaviour, especially when user input is involved. Includes internal state transitions.
+  </Card>
+  <Card title="info (2)" icon="circle-info">
+    Normal operational messages intended to be visible to the user. These are infrequent and indicate expected behaviour.
+  </Card>
+  <Card title="warning (3)" icon="triangle-exclamation">
+    Something may be wrong but operation can continue. Investigate when these appear unexpectedly.
+  </Card>
+  <Card title="error (4)" icon="circle-xmark">
+    Something has gone wrong. Typically accompanied by an exception or early program termination.
+  </Card>
+  <Card title="fatal (5)" icon="skull">
+    A severe, unrecoverable failure. Immediate attention required.
+  </Card>
+</CardGroup>
+
+There is also a special value `off (6)` that disables a backend entirely.
+
+**Filtering example:** if the global log level is set to `debug` (1), messages at `trace` (0) are suppressed. If it is set to `info` (2), both `trace` and `debug` messages are suppressed — without recompiling.
+
+## Three Layers of Filtering
+
+Log levels are evaluated in order from most restrictive to least. A message must pass every layer before it is delivered to any backend.
+
+<Steps>
+  <Step title="Compile-time minimum (UHD_LOG_MIN_LEVEL)">
+    Set at build time with the CMake flag `-DUHD_LOG_MIN_LEVEL=<level>`. Any message below this level is **permanently removed** from the binary — the code for those log calls is not emitted at all.
+
+    ```cmake
+    # Compile out trace and debug messages entirely
+    cmake -DUHD_LOG_MIN_LEVEL=info ..
+    ```
+
+    Accepted values are numeric (`0`–`5`) or the level name (`trace`, `debug`, `info`, `warning`, `error`, `fatal`).
+  </Step>
+  <Step title="Global runtime level (UHD_LOG_LEVEL)">
+    Controls the minimum level accepted across **all** backends at runtime. Raising this above the compile-time minimum narrows what is logged; lowering it below has no effect (compile-time minimum is the floor).
+
+    ```bash
+    export UHD_LOG_LEVEL=debug
+    # or equivalently:
+    export UHD_LOG_LEVEL=1
+    ```
+
+    Can also be changed programmatically (see [Programmatic API](#programmatic-api) below).
+  </Step>
+  <Step title="Per-backend level">
+    Each backend has its own level threshold applied after the global filter. The console and file backends can be configured independently so that, for example, only `warning` and above appears in the terminal while the full `debug` log is written to a file.
+
+    ```bash
+    export UHD_LOG_CONSOLE_LEVEL=warning
+    export UHD_LOG_FILE_LEVEL=debug
+    ```
+  </Step>
+</Steps>
+
+## Backends
+
+UHD provides two logging backends out of the box. Additional backends can be registered at runtime via `uhd::log::add_logger()`.
+
+<AccordionGroup>
+  <Accordion title="Console backend (stderr)">
+
+The console backend writes formatted log messages to `std::clog` (which maps to `stderr`). It is enabled by default.
+
+**Log format**
+
+Each line is plain text with space-separated tag fields prepended to the message:
+
+```
+[INFO] [X300] Detecting internal GPSDO...
+[WARNING] [B200] Unable to set the thread priority
+[ERROR] [MPMD] MPM init failed: connection refused
+```
+
+Optional prefixes can be enabled at compile time:
+
+| CMake flag | Adds to each line |
+|------------|-------------------|
+| `-DUHD_LOG_CONSOLE_TIME` | Timestamp: `[2024-01-15 14:32:00.123456]` |
+| `-DUHD_LOG_CONSOLE_THREAD` | Thread ID: `[0x7f3b2c]` |
+| `-DUHD_LOG_CONSOLE_SRC` | Source location: `[x300_impl.cpp:427]` |
+
+**Disabling at compile time**
+
+```cmake
+cmake -DUHD_LOG_CONSOLE_DISABLE=ON ..
+```
+
+**Configuring level at runtime**
+
+```bash
+# Show only warnings and above in the terminal
+export UHD_LOG_CONSOLE_LEVEL=warning
+
+# Show everything including debug
+export UHD_LOG_CONSOLE_LEVEL=debug
+```
+
+  </Accordion>
+
+  <Accordion title="File backend">
+
+The file backend writes all log messages to a CSV file. Each row contains:
+
+- Timestamp
+- Thread ID
+- Source file and line number
+- Severity level
+- Component/channel name
+- Log message text
+
+By default **no log file is written**. Enable it by setting a path.
+
+**Enabling the log file**
+
+At compile time (baked into the binary default):
+
+```cmake
+cmake -DUHD_LOG_FILE=/var/log/uhd.log ..
+```
+
+At runtime via environment variable (overrides compile-time default):
+
+```bash
+export UHD_LOG_FILE=/tmp/uhd_session.log
+```
+
+**Configuring file log level**
+
+```bash
+# Write debug and above to the file
+export UHD_LOG_FILE_LEVEL=debug
+
+# Write everything including trace
+export UHD_LOG_FILE_LEVEL=trace
+```
+
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variable Reference
+
+| Variable | Scope | Description |
+|----------|-------|-------------|
+| `UHD_LOG_LEVEL` | Global | Runtime global minimum log level (numeric or name) |
+| `UHD_LOG_CONSOLE_LEVEL` | Console backend | Minimum level for console output |
+| `UHD_LOG_FILE_LEVEL` | File backend | Minimum level for file output |
+| `UHD_LOG_FILE` | File backend | Path to the log file; file logging is off when unset |
+
+**Quick examples**
+
+```bash
+# Suppress everything below warning on the console; write full debug log to file
+export UHD_LOG_CONSOLE_LEVEL=warning
+export UHD_LOG_FILE_LEVEL=debug
+export UHD_LOG_FILE=/tmp/uhd_debug.log
+./my_uhd_app
+
+# Run with maximum verbosity everywhere
+export UHD_LOG_LEVEL=trace
+./my_uhd_app
+
+# Silence the console completely
+export UHD_LOG_CONSOLE_LEVEL=off
+./my_uhd_app
+```
+
+## Programmatic API
+
+`uhd/utils/log.hpp` exposes C++ functions to change log levels at runtime without restarting your application.
+
+```cpp
+#include <uhd/utils/log.hpp>
+
+// Set the global log level (applies to all backends)
+uhd::log::set_log_level(uhd::log::debug);
+
+// Set the console backend level only
+uhd::log::set_console_level(uhd::log::warning);
+
+// Set the file backend level only
+uhd::log::set_file_level(uhd::log::trace);
+
+// Set the level for any named backend by name
+uhd::log::set_logger_level("console", uhd::log::info);
+uhd::log::set_logger_level("file",    uhd::log::debug);
+```
+
+<Note>
+`set_logger_level()` throws `uhd::key_error` if the named logger does not exist. The built-in names are `"console"` and `"file"`.
+</Note>
+
+The `severity_level` enum values and their numeric equivalents:
+
+```cpp
+uhd::log::trace   // 0
+uhd::log::debug   // 1
+uhd::log::info    // 2
+uhd::log::warning // 3
+uhd::log::error   // 4
+uhd::log::fatal   // 5
+uhd::log::off     // 6  — disables the backend
+```
+
+## Logging Macros for Custom UHD Extensions
+
+When writing code that extends UHD (custom RFNoC blocks, custom transports, out-of-tree modules), use the standard UHD logging macros instead of `std::cerr` or `printf`. This ensures your messages flow through the same filtering and formatting pipeline as the rest of the driver.
+
+Two macro styles are available:
+
+### Macro-style (fastest, compile-time removable)
+
+```cpp
+UHD_LOG_TRACE("MyComponent", "Entering setup()");
+UHD_LOG_DEBUG("MyComponent", "rx_rate = " << rx_rate);
+UHD_LOG_INFO ("MyComponent", "Device initialized successfully");
+UHD_LOG_WARNING("MyComponent", "Requested gain exceeds recommended range");
+UHD_LOG_ERROR("MyComponent", "Timeout waiting for lock");
+UHD_LOG_FATAL("MyComponent", "Hardware fault detected");
+```
+
+These macros are **completely compiled out** when the log level is below the compile-time minimum (`UHD_LOG_MIN_LEVEL`). Use them in hot paths where the logging overhead must be zero in production builds.
+
+### Stream-style (more flexible, always present in binary)
+
+```cpp
+UHD_LOGGER_TRACE("MyComponent")   << "Entering setup()";
+UHD_LOGGER_DEBUG("MyComponent")   << "rx_rate = " << rx_rate;
+UHD_LOGGER_INFO("MyComponent")    << "Device initialized";
+UHD_LOGGER_WARNING("MyComponent") << "Gain out of range: " << gain_db << " dB";
+UHD_LOGGER_ERROR("MyComponent")   << "Lock timeout after " << ms << " ms";
+UHD_LOGGER_FATAL("MyComponent")   << "Unrecoverable hardware error";
+```
+
+The stream-style macros support C++ streaming operators and allow deferred expression evaluation, but the macro call itself is never compiled out. Use them when you need to stream complex expressions or multiple fields.
+
+### RFNoC convenience macros
+
+Inside an RFNoC block implementation that has access to `this->get_unique_id()`, the `RFNOC_LOG_*` family automatically fills in the component name:
+
+```cpp
+RFNOC_LOG_DEBUG("Configuring DDC block");
+RFNOC_LOG_WARNING("Requested decimation not achievable, rounding to " << actual);
+RFNOC_LOG_ERROR("Block register access failed");
+```
+
+### Macro arguments
+
+Every `UHD_LOG_*` and `UHD_LOGGER_*` macro takes two arguments:
+
+| Argument | Description |
+|----------|-------------|
+| `component` | A string label identifying the subsystem (e.g. `"X300"`, `"MyBlock"`). Shown in brackets in the console output: `[INFO] [X300] …` |
+| `message` | The log message. For macro-style, must be a single expression; for stream-style, any sequence of `<<`-separated values. |
+
+### Debugging helpers
+
+`log.hpp` also defines several one-liner debug helpers:
+
+```cpp
+// Print current file, line, and function name at DEBUG level
+UHD_HERE();
+
+// Print a variable name and its value at DEBUG level
+double my_freq = 915e6;
+UHD_VAR(my_freq);   // logs: my_freq = 9.15e+08
+
+// Print a variable as a zero-padded 8-digit hex value at DEBUG level
+uint32_t reg_val = 0xDEADBEEF;
+UHD_HEX(reg_val);   // logs: reg_val = 0xDEADBEEF
+```
+
+<Tip>
+For log-and-throw patterns, `UHD_LOG_THROW` logs the message at `error` level and then throws the specified exception type in a single call:
+
+```cpp
+UHD_LOG_THROW(uhd::runtime_error, "MyComponent",
+    "Invalid sample rate: " << rate);
+```
+</Tip>

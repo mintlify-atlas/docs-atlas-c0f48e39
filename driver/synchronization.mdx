@@ -1,0 +1,254 @@
+---
+title: "Synchronizing Multiple USRP Devices for MIMO Use"
+sidebarTitle: "Synchronization"
+description: "Synchronize multiple USRP devices using 10 MHz and PPS references, GPSDO, MIMO cable, or OctoClock for phase-coherent MIMO and SDR applications."
+---
+
+Running two or more USRP devices in lock-step requires two things: a shared frequency reference so all devices tick at the same rate, and a shared time reference so all devices start capturing or transmitting samples at exactly the same moment. UHD exposes both requirements through simple API calls that select a clock source and a time source independently. Once these are aligned, issuing a timed stream command guarantees sample-aligned operation across the entire system.
+
+<Note>
+The synchronization features described on this page do not apply to USRP1, which does not support the advanced clock and time features available in newer products.
+</Note>
+
+## Common Reference Signals
+
+USRP devices require two external signals for full synchronization:
+
+<CardGroup cols={2}>
+  <Card title="10 MHz Reference" icon="wave-square">
+    Provides a shared frequency reference for all devices. Some devices also support other reference frequencies — check the individual device manual.
+  </Card>
+  <Card title="Pulse Per Second (PPS)" icon="clock">
+    A 1 Hz pulse used to synchronously latch the same timestamp into every device, aligning their sample counters.
+  </Card>
+</CardGroup>
+
+## Selecting Clock and Time Sources
+
+UHD separates the frequency reference (`clock_source`) from the time reference (`time_source`). Set both before issuing any stream commands.
+
+<Tabs>
+  <Tab title="External SMA connectors">
+    Most USRPs have SMA connectors on the front or back panel for a 10 MHz reference and a PPS signal. These can come from an OctoClock, a third-party GPSDO, or a lab signal generator.
+
+    ```cpp
+    usrp->set_clock_source("external");
+    usrp->set_time_source("external");
+    ```
+
+    <Note>
+    When generating your own PPS signal, clock it from the same 10 MHz reference being fed to the USRP. Consult your device's application notes for the required voltage and edge specifications.
+    </Note>
+  </Tab>
+  <Tab title="MIMO cable (USRP2 / N200-Series)">
+    The MIMO expansion cable can distribute the master device's clock and time to a second device without any external signal generators. This method is limited to two USRPs.
+
+    ```cpp
+    // On the slave device only
+    usrp->set_clock_source("mimo");
+    usrp->set_time_source("mimo");
+    ```
+  </Tab>
+  <Tab title="GPSDO (internal or external)">
+    A GPS-disciplined oscillator provides both a 10 MHz reference and a PPS aligned to GPS time. Select it the same way as an external reference:
+
+    ```cpp
+    usrp->set_clock_source("gpsdo");
+    usrp->set_time_source("gpsdo");
+    ```
+  </Tab>
+  <Tab title="N200/N210 alternate PPS edge">
+    If the PPS signal arrives inside the FPGA clock's timing margin on an N200/N210 or B100, switch the edge reference:
+
+    ```cpp
+    usrp->set_time_source("_external_");
+    ```
+  </Tab>
+</Tabs>
+
+## Setting the Device Time
+
+After selecting the time source, you must initialize the device's internal timestamp register so all devices share the same time base. The `set_time_next_pps()` call latches the provided time into the device on the next PPS rising edge.
+
+### Method 1 — Poll the last-PPS register
+
+This approach waits for a PPS edge by polling the device, then programs the next PPS to time 0.0:
+
+```cpp
+// Wait for the current PPS to pass
+const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
+while (last_pps_time == usrp->get_time_last_pps()) {
+    // sleep ~100 ms between polls
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+// The just-detected PPS edge has passed; the next one will latch this value:
+usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+```
+
+### Method 2 — Query the GPSDO for GPS time
+
+Most GPSDOs output an NMEA sentence over serial once per PPS. Parse the sentence to obtain GPS time, then set the device to that value:
+
+```cpp
+// Wait for the NMEA message that marks the upcoming PPS edge
+// (user implements wait_for_nmea_message() and parse_nmea_time())
+wait_for_nmea_message();
+usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+
+// -- OR -- set the device to actual GPS time:
+wait_for_nmea_message();
+double gps_time = parse_nmea_time();
+// At the next PPS the device time will match GPS time:
+usrp->set_time_next_pps(uhd::time_spec_t(gps_time + 1));
+```
+
+<Tip>
+The `sync_to_gps` example included with UHD provides a complete implementation of GPS-time locking. Look for it in `<uhd-install>/share/uhd/examples/`.
+</Tip>
+
+### Method 3 — MIMO cable (USRP2 / N200/N210 only)
+
+When using the MIMO cable, the slave device automatically synchronizes its time to the master device over the cable. No explicit `set_time_next_pps()` call is needed on the slave.
+
+### Setting time immediately (no PPS)
+
+For single-device use cases where exact absolute time is not required, `set_time_now()` sets the device's timestamp without waiting for a PPS edge:
+
+```cpp
+usrp->set_time_now(uhd::time_spec_t(0.0));
+```
+
+## Synchronizing Channel Phase
+
+Sharing a clock and time reference synchronizes sample counts, but it does not automatically align the phase of the DSP CORDICs or the RF local oscillators. Two additional steps are needed for phase-coherent reception or transmission.
+
+### Step 1 — Align CORDICs with a timed stream command
+
+The CORDIC is reset at every start-of-burst command. Issuing a timed stream command on all devices ensures all CORDICs reset at exactly the same sample, producing identical initial phase across devices.
+
+<Steps>
+  <Step title="RX — issue a timed stream command">
+    ```cpp
+    uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+    stream_cmd.num_samps   = samps_to_recv;
+    stream_cmd.stream_now  = false;
+    stream_cmd.time_spec   = time_to_recv; // same value on all devices
+    rx_stream->issue_stream_cmd(stream_cmd);
+    ```
+  </Step>
+  <Step title="TX — set time spec in metadata">
+    ```cpp
+    uhd::tx_metadata_t md;
+    md.start_of_burst = true;
+    md.end_of_burst   = false;
+    md.has_time_spec  = true;
+    md.time_spec      = time_to_send; // same value on all devices
+
+    size_t num_tx_samps = tx_stream->send(&buff.front(), samps_to_send, md);
+    ```
+  </Step>
+</Steps>
+
+### Step 2 — Align LOs with timed tuning commands (SBX, UBX, OBX)
+
+For frontends based on SBX, UBX, or OBX daughterboards, issue tuning commands at a precise future time using `set_command_time()`. This ensures the phase offset between VCO/PLL chains is the same after every re-tune.
+
+```cpp
+// Schedule all tune commands 100 ms from now
+uhd::time_spec_t cmd_time = usrp->get_time_now() + uhd::time_spec_t(0.1);
+usrp->set_command_time(cmd_time);
+
+// Tune both channels — these commands execute at cmd_time
+usrp->set_rx_freq(1.03e9, 0); // Channel 0
+usrp->set_rx_freq(1.03e9, 1); // Channel 1
+
+// Clear the command time so subsequent calls execute immediately
+usrp->clear_command_time();
+```
+
+<Warning>
+There is always a random phase offset between any two frontends. This offset is different for different LO frequencies, but it remains constant after each re-tune. For phase-coherent applications you must estimate and compensate for this offset using a training sequence, and you must re-calibrate after every tune command.
+</Warning>
+
+#### LO Phase Sync Support Matrix
+
+| Daughterboard | N2x0 | X3x0 |
+|---|---|---|
+| SBX (all revisions) | ✅ | ✅ |
+| UBX / UBX-160 | ❌ | ✅ |
+| OBX | ❌ | ✅ |
+| CBX / CBX-120 | — | fractional N only |
+| WBX / WBX-120 | — | fractional N only |
+
+## OctoClock — Distributing References to Multiple USRPs
+
+For setups with more than two USRPs, the OctoClock (CDA-2990) distributes a 10 MHz reference and PPS signal to up to eight USRP devices simultaneously. Connect the OctoClock's output ports to the SMA reference inputs on each USRP, then configure each USRP for external references:
+
+```cpp
+// Apply to every USRP in the setup
+usrp->set_clock_source("external");
+usrp->set_time_source("external");
+```
+
+<Tip>
+The OctoClock can itself be locked to a GPSDO, making it possible to distribute GPS-disciplined time and frequency to an entire array of USRPs from a single GPS antenna.
+</Tip>
+
+## Complete Multi-USRP Synchronization Checklist
+
+<Steps>
+  <Step title="Connect physical references">
+    Connect 10 MHz and PPS signals from your reference (OctoClock, GPSDO, lab instrument) to the SMA connectors on every USRP.
+  </Step>
+  <Step title="Select sources in software">
+    ```cpp
+    for (auto& usrp : usrp_list) {
+        usrp->set_clock_source("external");
+        usrp->set_time_source("external");
+    }
+    ```
+  </Step>
+  <Step title="Verify the 10 MHz lock">
+    ```cpp
+    for (auto& usrp : usrp_list) {
+        bool locked = usrp->get_mboard_sensor("ref_locked").to_bool();
+        if (!locked) { /* handle error */ }
+    }
+    ```
+  </Step>
+  <Step title="Set time on PPS edge">
+    ```cpp
+    // Wait for a PPS edge, then set all devices to the same time
+    const uhd::time_spec_t last_pps_time = usrp_list[0]->get_time_last_pps();
+    while (last_pps_time == usrp_list[0]->get_time_last_pps()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    for (auto& usrp : usrp_list) {
+        usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    }
+    // Wait one more second to confirm the latch took effect
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ```
+  </Step>
+  <Step title="Tune with timed commands">
+    ```cpp
+    uhd::time_spec_t cmd_time = usrp_list[0]->get_time_now() + uhd::time_spec_t(0.1);
+    for (auto& usrp : usrp_list) {
+        usrp->set_command_time(cmd_time);
+        usrp->set_rx_freq(center_freq);
+        usrp->clear_command_time();
+    }
+    ```
+  </Step>
+  <Step title="Issue timed stream commands">
+    ```cpp
+    uhd::time_spec_t start_time = usrp_list[0]->get_time_now() + uhd::time_spec_t(0.2);
+    for (auto& rx_stream : rx_stream_list) {
+        uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+        cmd.stream_now = false;
+        cmd.time_spec  = start_time;
+        rx_stream->issue_stream_cmd(cmd);
+    }
+    ```
+  </Step>
+</Steps>

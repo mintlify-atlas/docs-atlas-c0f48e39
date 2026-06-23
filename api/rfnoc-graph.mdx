@@ -1,0 +1,387 @@
+---
+title: "rfnoc_graph: RFNoC Flow Graph API"
+sidebarTitle: "rfnoc_graph"
+description: "API reference for uhd::rfnoc::rfnoc_graph — connect RFNoC blocks, build flow graphs, and stream from Generation-3 and later USRP devices."
+---
+
+`rfnoc_graph` is the entry point for the RFNoC (RF Network on Chip) API, available on Generation-3 and later USRP devices (X3xx, X4xx, N3xx). Where `multi_usrp` abstracts the hardware into a simple flat control surface, `rfnoc_graph` exposes the device's internal FPGA processing pipeline as a graph of individually addressable, programmable blocks. Each block — DDC, DUC, FFT, FIR, custom logic — is accessed by its canonical block ID, connected with `connect()`, and then the graph is committed before streaming begins.
+
+```cpp
+#include <uhd/rfnoc_graph.hpp>
+```
+
+<Note>
+`rfnoc_graph` requires a device that implements RFNoC. Pre-RFNoC USRPs (B2xx, N2xx, USRP1) must use `multi_usrp` instead.
+</Note>
+
+---
+
+## Factory
+
+```cpp
+uhd::rfnoc::rfnoc_graph::sptr graph =
+    uhd::rfnoc::rfnoc_graph::make(device_addr);
+```
+
+<ParamField path="device_addr" type="uhd::device_addr_t" required>
+  Device address arguments string, e.g., `"addr=192.168.10.2"`, `"type=x300"`, or `""` for auto-discovery. For multi-device graphs use `addr0`, `addr1`, etc.
+</ParamField>
+
+**Return type:** `uhd::rfnoc::rfnoc_graph::sptr` (a `std::shared_ptr<rfnoc_graph>`)
+
+**Throws:** `uhd::key_error` if no matching device is found; `uhd::index_error` if fewer devices than expected are found.
+
+```cpp
+// Single X310
+auto graph = uhd::rfnoc::rfnoc_graph::make("addr=192.168.10.2");
+
+// Two N310 devices
+uhd::device_addr_t args;
+args["addr0"] = "192.168.10.2";
+args["addr1"] = "192.168.10.3";
+auto graph = uhd::rfnoc::rfnoc_graph::make(args);
+```
+
+---
+
+## Block ID Syntax
+
+Every RFNoC block is identified by a canonical string of the form:
+
+```
+<device_index>/<BlockName>#<instance>
+```
+
+| Part | Example | Description |
+|---|---|---|
+| Device index | `0` | Index of the motherboard (0-based) |
+| Block name | `Radio`, `DDC`, `DUC`, `FFT`, `FIR` | RFNoC block type |
+| Instance | `#0`, `#1` | Zero-based instance of that block type on the device |
+
+**Examples:** `"0/Radio#0"`, `"0/DDC#0"`, `"1/Radio#1"`
+
+---
+
+## Block Discovery
+
+### `find_blocks()`
+
+```cpp
+std::vector<block_id_t> find_blocks(const std::string& block_id_hint) const;
+
+// Typed version — returns only blocks castable to type T
+template <typename T>
+std::vector<block_id_t> find_blocks(const std::string& block_id_hint) const;
+```
+
+Returns all block IDs whose canonical name contains `block_id_hint`, sorted lexicographically. Returns an empty vector if no match is found.
+
+```cpp
+auto radio_ids = graph->find_blocks("Radio");
+// Returns e.g. ["0/Radio#0", "0/Radio#1"]
+
+// Typed: only Radio blocks castable to radio_control
+auto radios = graph->find_blocks<uhd::rfnoc::radio_control>("Radio");
+```
+
+### `has_block()`
+
+```cpp
+bool has_block(const block_id_t& block_id) const;
+
+// Typed version — also checks type compatibility
+template <typename T>
+bool has_block(const block_id_t& block_id) const;
+```
+
+Returns `true` if a block with the given ID exists on the device.
+
+### `get_block()`
+
+```cpp
+uhd::rfnoc::noc_block_base::sptr get_block(const block_id_t& block_id) const;
+
+// Typed version — performs dynamic_pointer_cast and throws on type mismatch
+template <typename T>
+std::shared_ptr<T> get_block(const block_id_t& block_id) const;
+```
+
+Returns the block controller for the named block.
+
+**Throws:** `uhd::lookup_error` if the block ID does not exist or (for the typed version) if the type does not match.
+
+```cpp
+// Get a radio controller (typed)
+auto radio = graph->get_block<uhd::rfnoc::radio_control>("0/Radio#0");
+radio->set_rx_frequency(2.4e9, 0);
+radio->set_rx_gain(30.0, 0);
+
+// Get a DDC block
+auto ddc = graph->get_block<uhd::rfnoc::ddc_block_control>("0/DDC#0");
+ddc->set_output_rate(1e6, 0);
+```
+
+---
+
+## Connections
+
+### `connect()` — Block to Block
+
+```cpp
+void connect(const block_id_t& src_blk,
+             size_t            src_port,
+             const block_id_t& dst_blk,
+             size_t            dst_port,
+             bool              is_back_edge = false);
+```
+
+<ParamField path="src_blk" type="block_id_t" required>
+  Source block ID (e.g., `"0/Radio#0"`).
+</ParamField>
+
+<ParamField path="src_port" type="size_t" required>
+  Output port index on the source block.
+</ParamField>
+
+<ParamField path="dst_blk" type="block_id_t" required>
+  Destination block ID.
+</ParamField>
+
+<ParamField path="dst_port" type="size_t" required>
+  Input port index on the destination block.
+</ParamField>
+
+<ParamField path="is_back_edge" type="bool" default="false">
+  Marks this connection as a back-edge in the graph's dependency resolution algorithm. Use for feedback loops.
+</ParamField>
+
+**Throws:** `uhd::routing_error` if either port is already statically connected to a different block.
+
+### `connect()` — Streamer to Block
+
+```cpp
+// Connect a TX streamer to a block input
+void connect(uhd::tx_streamer::sptr streamer,
+             size_t                 strm_port,
+             const block_id_t&      dst_blk,
+             size_t                 dst_port,
+             uhd::transport::adapter_id_t adapter_id = ...);
+
+// Connect a block output to an RX streamer
+void connect(const block_id_t&      src_blk,
+             size_t                 src_port,
+             uhd::rx_streamer::sptr streamer,
+             size_t                 strm_port,
+             uhd::transport::adapter_id_t adapter_id = ...);
+```
+
+### `disconnect()`
+
+```cpp
+// Disconnect two blocks
+void disconnect(const block_id_t& src_blk, size_t src_port,
+                const block_id_t& dst_blk, size_t dst_port);
+
+// Disconnect all ports of a streamer
+void disconnect(const std::string& streamer_id);
+
+// Disconnect a single port of a streamer
+void disconnect(const std::string& streamer_id, size_t port);
+```
+
+### `is_connectable()`
+
+```cpp
+bool is_connectable(const block_id_t& src_blk, size_t src_port,
+                    const block_id_t& dst_blk, size_t dst_port);
+```
+
+Returns `true` if `connect()` can be called with these arguments. Does **not** check whether a connection already exists.
+
+### `enumerate_active_connections()`
+
+```cpp
+std::vector<uhd::rfnoc::graph_edge_t> enumerate_active_connections();
+```
+
+Returns all connections that were established by `connect()` calls.
+
+### `enumerate_static_connections()`
+
+```cpp
+std::vector<uhd::rfnoc::graph_edge_t> enumerate_static_connections() const;
+```
+
+Returns connections that are hardwired in the device's FPGA image. Static connections must also be declared via `connect()` to participate in property propagation.
+
+---
+
+## Streamers
+
+RFNoC streamers are created from the graph, not from `multi_usrp`. After creation, connect the streamer to a block port using the streamer overloads of `connect()`.
+
+### `create_rx_streamer()`
+
+```cpp
+uhd::rx_streamer::sptr create_rx_streamer(const size_t num_ports,
+                                           const stream_args_t& args);
+```
+
+<ParamField path="num_ports" type="size_t" required>
+  Number of channels this streamer will receive from. Must match the number of `connect()` calls made for this streamer.
+</ParamField>
+
+### `create_tx_streamer()`
+
+```cpp
+uhd::tx_streamer::sptr create_tx_streamer(const size_t num_ports,
+                                           const stream_args_t& args);
+```
+
+---
+
+## Graph Lifecycle
+
+### `commit()`
+
+```cpp
+void commit();
+```
+
+Finalizes the graph: validates all connections, resolves block properties end-to-end, and prepares the device for streaming. **Call this once after all `connect()` calls and before issuing stream commands.**
+
+**Throws:** `uhd::resolve_error` if block property resolution fails (e.g., incompatible sample rates across a connection).
+
+### `release()`
+
+```cpp
+void release();
+```
+
+Suspends property propagation. Acts as the inverse of `commit()`. Useful when modifying the graph after initial setup. Call `commit()` again to re-enable propagation.
+
+<Warning>
+Always call `commit()` before starting to stream. Forgetting this call is a common source of incorrect behavior and hard-to-diagnose errors.
+</Warning>
+
+---
+
+## Hardware Control
+
+### `get_num_mboards()`
+
+```cpp
+size_t get_num_mboards() const;
+```
+
+Returns the number of motherboards in the graph.
+
+### `get_mb_controller()`
+
+```cpp
+std::shared_ptr<uhd::rfnoc::mb_controller> get_mb_controller(size_t mb_index = 0);
+```
+
+Returns the motherboard controller for direct clock/time/PPS access.
+
+### `synchronize_devices()`
+
+```cpp
+bool synchronize_devices(const uhd::time_spec_t& time_spec, const bool quiet);
+```
+
+Synchronizes all motherboards in the graph. Sets each motherboard's time to `time_spec` on the next PPS edge. Returns `true` on success. Called automatically during `rfnoc_graph::make()` — call again if synchronization is lost.
+
+### `to_dot()`
+
+```cpp
+std::string to_dot();
+```
+
+Returns a Graphviz `.dot` representation of the current graph for visualization and debugging.
+
+---
+
+## Complete RX Flow Graph Example
+
+```cpp
+#include <uhd/rfnoc_graph.hpp>
+#include <uhd/rfnoc/radio_control.hpp>
+#include <uhd/rfnoc/ddc_block_control.hpp>
+#include <uhd/stream.hpp>
+#include <complex>
+#include <vector>
+#include <iostream>
+
+int main() {
+    // 1. Create the graph
+    auto graph = uhd::rfnoc::rfnoc_graph::make("addr=192.168.10.2");
+
+    // 2. Get typed block controllers
+    auto radio = graph->get_block<uhd::rfnoc::radio_control>("0/Radio#0");
+    auto ddc   = graph->get_block<uhd::rfnoc::ddc_block_control>("0/DDC#0");
+
+    // 3. Configure the radio block
+    radio->set_rx_frequency(2.4e9, 0);
+    radio->set_rx_gain(30.0, 0);
+    radio->set_rate(200e6);     // master clock rate
+
+    // 4. Configure the DDC (decimation)
+    ddc->set_output_rate(1e6, 0);  // 1 Msps output
+
+    // 5. Create the RX streamer (before connecting)
+    uhd::stream_args_t stream_args("fc32", "sc16");
+    auto rx_stream = graph->create_rx_streamer(1, stream_args);
+
+    // 6. Connect: Radio → DDC → Streamer
+    graph->connect("0/Radio#0", 0, "0/DDC#0", 0);
+    graph->connect("0/DDC#0", 0, rx_stream, 0);
+
+    // 7. Commit the graph (required before streaming)
+    graph->commit();
+
+    // 8. Start continuous streaming
+    uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+    cmd.stream_now = true;
+    rx_stream->issue_stream_cmd(cmd);
+
+    // 9. Receive samples
+    const size_t N = 1000;
+    std::vector<std::complex<float>> buf(N);
+    uhd::rx_metadata_t md;
+
+    size_t n = rx_stream->recv(&buf.front(), N, md, 3.0);
+    std::cout << "Received " << n << " samples at "
+              << md.time_spec.get_real_secs() << " s\n";
+
+    // 10. Stop streaming
+    uhd::stream_cmd_t stop(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS);
+    rx_stream->issue_stream_cmd(stop);
+    return 0;
+}
+```
+
+---
+
+## Multi-Device RX Example
+
+```cpp
+// Two X310s, each contributing one channel
+uhd::device_addr_t args;
+args["addr0"] = "192.168.10.2";
+args["addr1"] = "192.168.10.3";
+auto graph = uhd::rfnoc::rfnoc_graph::make(args);
+
+// Create a 2-channel streamer
+uhd::stream_args_t sa("fc32", "sc16");
+auto rx_stream = graph->create_rx_streamer(2, sa);
+
+// Connect each radio to the streamer
+graph->connect("0/Radio#0", 0, rx_stream, 0);
+graph->connect("1/Radio#0", 0, rx_stream, 1);
+graph->commit();
+```
+
+<Tip>
+Use `graph->to_dot()` to print the graph in Graphviz format and paste into https://dreampuf.github.io/GraphvizOnline/ for a visual block diagram of your connections.
+</Tip>

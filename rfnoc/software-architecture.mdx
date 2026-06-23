@@ -1,0 +1,294 @@
+---
+title: "RFNoC Software Architecture: Graph and Blocks"
+sidebarTitle: "Software Architecture"
+description: "Explore RFNoC's C++ software layer: block controllers, block IDs, property propagation, the graph API, streamers, and built-in block types."
+---
+
+The RFNoC software layer in UHD provides a complete C++ API for discovering, configuring, connecting, and streaming from the blocks instantiated in an FPGA image. All interaction with the hardware flows through three primary abstractions: **block controllers** that mirror individual NoC blocks, the **rfnoc_graph** object that manages the overall topology, and **streamers** that move sample data between the host and the FPGA.
+
+## Block Controllers
+
+A block controller is the UHD (C++) counterpart of a NoC Shell in the FPGA. Every NoC block in the FPGA image has a corresponding block controller object instantiated automatically by UHD at connection time. Block controllers are derived from `uhd::rfnoc::noc_block_base` and expose:
+
+- **Register access** — `regs().peek32(addr)` and `regs().poke32(addr, value)` for direct hardware register reads and writes.
+- **Properties** — a type-safe mechanism for communicating block configuration along graph edges.
+- **Actions** — ephemeral operations (e.g., stream commands) that propagate through the graph.
+
+If you need capabilities beyond the default controller, you can derive a custom class from `uhd::rfnoc::noc_block_base` and register it with the UHD block registry so that it is instantiated automatically whenever the matching NoC ID is found.
+
+### Block IDs
+
+Every block instance in an RFNoC network is identified by a **Block ID** with the following syntax:
+
+```
+<Device>/<BlockName>:<Instance>
+```
+
+For example, the first DDC block on device 0 has the block ID `0/DDC#0`, and the second FFT block on the same device is `0/FFT#1`. Multiple instances of the same block type share the same **NoC ID** (a 32-bit hardware identifier) but differ in their Block ID.
+
+```cpp
+// Retrieve a block controller by its string ID
+auto ddc = graph->get_block<uhd::rfnoc::ddc_block_control>("0/DDC#0");
+
+// Find all Radio blocks on the device
+auto radio_ids = graph->find_blocks<uhd::rfnoc::radio_control>("Radio");
+```
+
+### Register Interface
+
+The `register_iface` (accessed via `regs()` inside a block controller) supports:
+
+- **Peek/poke** — synchronous 32-bit register reads and writes.
+- **Timed commands** — register writes or reads that execute at a specified hardware timestamp.
+- **Sleep** — stall the control endpoint for a given number of clock cycles to sequence operations.
+- **Async message callbacks** — callbacks invoked when the FPGA block sends an unsolicited control packet back to software.
+
+```cpp
+// Write a value to a hardware register
+regs().poke32(MY_REGISTER_ADDR, 0xDEAD);
+
+// Read back a register value
+uint32_t val = regs().peek32(MY_STATUS_REG);
+
+// Timed write: execute at a specific hardware time
+regs().poke32(MY_REG, value, command_time);
+```
+
+## Block Properties
+
+Properties are the primary mechanism for communicating configuration both within a block and between adjacent blocks across graph edges. There are two kinds:
+
+### User Properties vs. Edge Properties
+
+Using the DDC block as an illustrative example:
+
+```
+           ┌──────────────┐
+           │  DDC Block   │
+ samp_rate │              │ samp_rate
+───────────> - freq       ├───────────>
+           │ - decim      │
+           └──────────────┘
+```
+
+- **User properties** (`freq`, `decim`) describe characteristics of the block itself — what it does to the data. They are set by the application or by property resolvers.
+- **Edge properties** (`samp_rate`) describe something about the data stream on a particular input or output connection. They propagate automatically when adjacent blocks are connected.
+
+The key power of properties is that **relationships between them can be declared as resolvers**. For the DDC:
+
+- `samp_rate_out = samp_rate_in / decim`
+- Normalized phase increment = `freq / samp_rate_in`
+
+When the Radio block upstream sets `samp_rate_out = 200e6` and a downstream Modem block requires `samp_rate_in = 20e6`, the DDC automatically resolves `decim = 10` without any explicit application code.
+
+### Property Propagation Example
+
+```cpp
+// Shortened DDC resolver — triggered when `decim` changes
+add_property_resolver(
+    {&decim},                               // Input trigger list
+    {&decim, &samp_rate_out, &samp_rate_in}, // Output list
+    [this, chan, ...]() {
+        decim = coerce_decim(double(decim.get()));
+        if (decim.is_dirty()) {
+            set_decim(decim.get(), chan); // poke hardware register
+        }
+        if (samp_rate_in.is_valid()) {
+            samp_rate_out = samp_rate_in.get() / decim.get();
+        } else if (samp_rate_out.is_valid()) {
+            samp_rate_in = samp_rate_out.get() * decim.get();
+        }
+    });
+```
+
+Properties must be declared as `property_t<T>` attributes and registered with `register_property()` before they participate in propagation:
+
+```cpp
+// Declare frequency properties for a 2-channel DDC
+std::vector<property_t<double>> _freq;
+_freq.reserve(2);
+_freq.push_back(property_t<double>("freq", 0.0, {res_source_info::USER, 0}));
+_freq.push_back(property_t<double>("freq", 0.0, {res_source_info::USER, 1}));
+register_property(&_freq[0]);
+register_property(&_freq[1]);
+```
+
+### Common Property Names
+
+These are the conventional names that blocks should reuse when applicable:
+
+| Property | Kind | Description |
+|----------|------|-------------|
+| `type` | Edge | Data type string (e.g., `sc16`, `fc32`) |
+| `samp_rate` | Edge | Sampling rate in samples per second |
+| `scaling` | Edge | Amplitude distortion introduced by this block |
+| `atomic_item_size` | Edge | Minimum indivisible data unit in bytes |
+| `spp` | User | Samples per packet |
+| `decim` / `interp` | User | Decimation or interpolation factor |
+
+<Note>
+  Two edge property names are reserved by the framework and cannot be redefined: `tick_rate` (must be uniform across all blocks in a graph) and `mtu` (maximum transmission unit, read from hardware registers).
+</Note>
+
+## The Graph API
+
+The `uhd::rfnoc::rfnoc_graph` class is the top-level session object for any RFNoC-capable USRP. It discovers all blocks in all connected devices and manages the logical topology.
+
+### Creating a Graph
+
+```cpp
+#include <uhd/rfnoc_graph.hpp>
+
+// Connect to a USRP by IP address
+auto graph = uhd::rfnoc::rfnoc_graph::make("addr=192.168.10.2");
+```
+
+### Connecting Blocks
+
+```cpp
+// Block-to-block connection
+graph->connect("0/Radio#0", 0, "0/DDC#0", 0);
+graph->connect("0/DDC#0",   0, "0/DDC#0", 1);   // multi-channel
+
+// Connect a block output to an RX streamer
+uhd::stream_args_t stream_args("fc32", "sc16");
+auto rx_streamer = graph->create_rx_streamer(1, stream_args);
+graph->connect("0/DDC#0", 0, rx_streamer, 0);
+```
+
+### Committing the Graph
+
+After all connections are declared, call `commit()` to run property propagation and validate the entire graph:
+
+```cpp
+graph->commit();
+// Throws uhd::resolve_error if properties cannot be reconciled
+```
+
+`commit()` and `release()` are reference-counted, so nested commit/release calls are safe in library code.
+
+## Streamers in RFNoC
+
+Streamers are the host-side endpoints that send or receive sample data. In the RFNoC model, a streamer is treated as a node in the graph just like any other block — you must explicitly connect it to a block output (for RX) or input (for TX) before calling `commit()`.
+
+```cpp
+// Create and connect a TX streamer
+uhd::stream_args_t tx_args("fc32", "sc16");
+auto tx_streamer = graph->create_tx_streamer(1, tx_args);
+graph->connect(tx_streamer, 0, "0/DUC#0", 0);
+
+// Create and connect an RX streamer
+uhd::stream_args_t rx_args("fc32", "sc16");
+auto rx_streamer = graph->create_rx_streamer(1, rx_args);
+graph->connect("0/DDC#0", 0, rx_streamer, 0);
+```
+
+After `graph->commit()`, streamers are ready for `recv()` and `send()` calls using the same API as `uhd::multi_usrp`.
+
+## Complete Example: Radio → DDC → Streamer
+
+The following code builds a simple receive chain on device 0:
+
+```cpp
+#include <uhd/rfnoc_graph.hpp>
+#include <uhd/rfnoc/radio_control.hpp>
+#include <uhd/rfnoc/ddc_block_control.hpp>
+
+// 1. Create graph
+auto graph = uhd::rfnoc::rfnoc_graph::make("addr=192.168.10.2");
+
+// 2. Retrieve typed block controllers
+auto radio = graph->get_block<uhd::rfnoc::radio_control>("0/Radio#0");
+auto ddc   = graph->get_block<uhd::rfnoc::ddc_block_control>("0/DDC#0");
+
+// 3. Configure radio
+radio->set_rx_frequency(2.4e9, 0);   // 2.4 GHz center frequency
+radio->set_rx_gain(30.0, 0);          // 30 dB gain
+radio->set_rate(200e6);               // 200 Msps master clock rate
+
+// 4. Configure DDC (samp_rate propagated automatically from radio)
+ddc->set_freq(-1e6, 0);               // shift down by 1 MHz
+ddc->set_output_rate(10e6, 0);        // decimate to 10 Msps
+
+// 5. Create and wire streamer
+uhd::stream_args_t args("fc32", "sc16");
+auto rx_streamer = graph->create_rx_streamer(1, args);
+graph->connect("0/Radio#0", 0, "0/DDC#0", 0);
+graph->connect("0/DDC#0",   0, rx_streamer, 0);
+
+// 6. Commit: runs property propagation and validates graph
+graph->commit();
+
+// 7. Issue a stream command and receive
+uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+cmd.stream_now = true;
+rx_streamer->issue_stream_cmd(cmd);
+
+std::vector<std::complex<float>> buffer(1024);
+uhd::rx_metadata_t md;
+size_t received = rx_streamer->recv(&buffer.front(), buffer.size(), md, 1.0);
+```
+
+## Built-in Block Controllers
+
+UHD ships controller classes for all in-tree RFNoC blocks. The most commonly used ones are described below.
+
+<CardGroup cols={2}>
+  <Card title="RadioControl" icon="radio">
+    `uhd::rfnoc::radio_control` — Interface to the USRP RF front-end. Controls frequency, gain, bandwidth, DC offset, IQ balance, GPIO, and timed streaming commands. Sets the `samp_rate` edge property on its output.
+  </Card>
+  <Card title="DDCBlockControl" icon="arrow-down">
+    `uhd::rfnoc::ddc_block_control` — Digital downconverter with frequency shift and decimation. User properties: `freq` (Hz) and `decim`. Methods: `set_freq()`, `set_output_rate()`, `get_input_rate()`.
+  </Card>
+  <Card title="DUCBlockControl" icon="arrow-up">
+    `uhd::rfnoc::duc_block_control` — Digital upconverter with frequency shift and interpolation. User properties: `freq` (Hz) and `interp`. Methods: `set_freq()`, `set_input_rate()`, `get_output_rate()`.
+  </Card>
+  <Card title="FFTBlockControl" icon="wave-square">
+    `uhd::rfnoc::fft_block_control` — Configurable forward/inverse FFT with cyclic prefix insertion and removal for OFDM. Methods: `set_length()`, `set_direction()`, `set_magnitude()`, `set_shift_config()`, `set_scaling_factor()`.
+  </Card>
+  <Card title="ReplayBlockControl" icon="database">
+    `uhd::rfnoc::replay_block_control` — Records sample data to DRAM and plays it back. Methods: `record()`, `play()`, `stop()`, `config_play()`, `issue_stream_cmd()`. Supports continuous looping and timed playback.
+  </Card>
+  <Card title="BlockControl (default)" icon="cube">
+    `uhd::rfnoc::block_control` — The fallback controller for any block whose type is not in the registry. Exposes raw register peek/poke and generic property access.
+  </Card>
+</CardGroup>
+
+### FFT Block Quick Reference
+
+```cpp
+auto fft = graph->get_block<uhd::rfnoc::fft_block_control>("0/FFT#0");
+
+fft->set_length(4096);
+fft->set_direction(uhd::rfnoc::fft_direction::FORWARD);
+fft->set_magnitude(uhd::rfnoc::fft_magnitude::COMPLEX);
+fft->set_shift_config(uhd::rfnoc::fft_shift::NORMAL); // DC at center
+fft->set_scaling_factor(1.0 / 4096.0);               // 1/N scaling
+```
+
+### Replay Block Quick Reference
+
+```cpp
+auto replay = graph->get_block<uhd::rfnoc::replay_block_control>("0/Replay#0");
+
+// Record 1 MB of data starting at memory offset 0
+replay->record(0, 1 << 20, /*port=*/0);
+
+// Later: play it back twice with a specific start time
+uhd::time_spec_t start_time = graph->get_mb_controller()->get_timekeeper(0)->get_time_now()
+                              + uhd::time_spec_t(0.1);
+replay->play(0, 1 << 20, /*port=*/0, start_time, /*iterations=*/2);
+```
+
+## Motherboard Controller
+
+Motherboard-level settings — time source, clock reference, timekeepers, synchronization — are accessed through `uhd::rfnoc::mb_controller`, not through block controllers:
+
+```cpp
+auto mb = graph->get_mb_controller(0);
+mb->set_clock_source("external");
+mb->set_time_source("external");
+mb->set_time_next_pps(uhd::time_spec_t(0.0));
+```
+
+When working with multiple USRPs, pass the motherboard index (0, 1, …) to `get_mb_controller()`. Block IDs use the same index prefix: blocks on motherboard 0 are `0/Radio#0`, blocks on motherboard 1 are `1/Radio#0`.

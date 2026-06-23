@@ -1,0 +1,267 @@
+---
+title: "Install UHD from Binary Packages"
+sidebarTitle: "Binary Install"
+description: "Install the USRP Hardware Driver on Windows, Linux, or macOS using pre-built packages, NSIS installers, and distro package managers."
+---
+
+Pre-built UHD packages are available for Windows, Linux, and macOS, letting you get up and running without compiling from source. Choose the tab that matches your operating system and follow the steps to install the driver, configure any USB hardware, and optionally add the UHD Python API.
+
+<Tabs>
+  <Tab title="Windows">
+
+    ## Download the NSIS Installer
+
+    Ettus Research provides 64-bit Windows installers built with LibUSBx for USB3 support. Installer file names encode the target architecture and MSVC compiler version — for example, a file ending in `_Win64_VS2019.exe` was built for 64-bit Windows with the Visual Studio 2019 toolchain.
+
+    - **Latest release:** [files.ettus.com/binaries/uhd/latest_release](http://files.ettus.com/binaries/uhd/latest_release)
+    - **All previous releases:** [files.ettus.com/binaries/uhd/](http://files.ettus.com/binaries/uhd/)
+
+    <Steps>
+      <Step title="Run the installer">
+        Download and execute the `.exe` installer that matches your target architecture and MSVC version. Accept the defaults or choose a custom install directory.
+      </Step>
+
+      <Step title="Install the MSVC Redistributable">
+        Download and run the [MSVC Redistributable Package](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#visual-studio-2015-2017-2019-and-2022) that matches the architecture encoded in the installer file name.
+      </Step>
+
+      <Step title="Install the WinUSB driver (USB devices only)">
+        Starting with UHD 4.9, the installer automatically places the Windows UHD USB driver in the installation folder and registers it with Windows — no further action is needed.
+
+        For earlier UHD versions, or to install the driver manually:
+
+        1. Download [erllc_uhd_winusb_driver.zip](http://files.ettus.com/binaries/misc/erllc_uhd_winusb_driver.zip) and extract it.
+        2. Plug in the USRP device; it will appear as an unrecognized USB device in Device Manager.
+        3. Right-click the unrecognized device and select **Update/Install driver software**.
+        4. Choose **Browse for driver**, navigate to `<UHD Install Dir>\share\uhd\usbdriver`, and select the `.inf` file for your device type.
+        5. Complete the wizard. Repeat once per USB device type per host computer.
+      </Step>
+
+      <Step title="Add UHD to PATH">
+        Add the UHD `bin` directory (typically `C:\Program Files\UHD\bin`) to the `%PATH%` environment variable.
+
+        <Tip>
+          The default Windows interface for editing environment variable paths is limited. [Rapid Environment Editor](http://www.rapidee.com) is a convenient free alternative.
+        </Tip>
+      </Step>
+
+      <Step title="Download FPGA images">
+        After installation, run the images downloader to fetch the FPGA and firmware images for your device:
+
+        ```bat
+        "C:\Program Files\UHD\bin\uhd_images_downloader.exe"
+        ```
+      </Step>
+    </Steps>
+
+    ## LibUSB (optional custom version)
+
+    UHD installers from version 4.8 onwards bundle a compatible LibUSB DLL at `<UHD Install Dir>\bin`. If you need a different LibUSB version, download a release from the [LibUSB GitHub releases page](https://github.com/libusb/libusb/releases). Ensure the binary matches the platform and MSVC toolset version shown in the UHD installer filename, then copy all files from `\VS20XX\MSYY\dll` inside the archive into `<UHD Install Dir>\bin`.
+
+    <Note>
+      On Windows, LibUSB v1.0.19 or later is required to use most USB 3 controllers.
+    </Note>
+
+    ## Python API (Windows)
+
+    Starting with UHD 4.8, the UHD Python API for Windows is distributed as a separate binary wheel on [PyPI](https://pypi.org/project/uhd/). The wheel supports the same architecture and MSVC toolchain as the installer and is available for Python 3.10 and 3.12.
+
+    <Warning>
+      The UHD Python wheel version **must exactly match** the version of the UHD Installer Package. Mismatched versions are untested and unsupported.
+    </Warning>
+
+    <Steps>
+      <Step title="Confirm the installed UHD version">
+        ```bat
+        "C:\Program Files\UHD\bin\uhd_config_info.exe" --version
+        ```
+      </Step>
+
+      <Step title="Install the matching wheel">
+        Replace `<version>` with the version string reported above:
+
+        ```bat
+        python -m pip install uhd==<version>
+        ```
+
+        `pip` will automatically download the correct wheel from PyPI.
+      </Step>
+
+      <Step title="Verify the import">
+        ```python
+        python
+        >>> import uhd
+        ```
+
+        No error output means the Python API is ready to use.
+      </Step>
+    </Steps>
+
+    ### Python package troubleshooting
+
+    | Task | Command |
+    |------|---------|
+    | Show installed wheel version | `python -m pip show uhd` |
+    | List all available versions on PyPI | `python -m pip index versions uhd` |
+    | Upgrade to the latest version | `python -m pip install --upgrade uhd` |
+    | Install a specific version | `python -m pip install uhd==<version>` |
+    | Check your Python version | `python --version` |
+
+    <Note>
+      Open a **new** command prompt after updating the UHD Installer Package so that the updated DLLs are found before initialising the Python module.
+    </Note>
+
+  </Tab>
+
+  <Tab title="Linux">
+
+    ## Distribution Package Manager
+
+    Most Linux distributions ship UHD in their official repositories. These packages are the easiest way to install and keep UHD up to date.
+
+    <CodeGroup>
+      ```bash Ubuntu / Debian
+      sudo apt-get install libuhd-dev uhd-host
+      ```
+
+      ```bash Fedora (yum)
+      sudo yum install uhd uhd-devel
+      ```
+
+      ```bash Fedora (dnf)
+      sudo dnf install uhd uhd-devel
+      ```
+    </CodeGroup>
+
+    <Note>
+      Live CD/DVD/USB installations are not supported. Refer to your distribution's package manager documentation for any other distro.
+    </Note>
+
+    ## Ettus Research PPA / Repository
+
+    Ettus Research publishes binary installers for the latest two Ubuntu LTS releases and the latest two Fedora versions for every stable UHD release. These packages are often more recent than those in the distribution repositories.
+
+    Latest release binaries: [files.ettus.com/binaries/uhd_stable/latest_release/](http://files.ettus.com/binaries/uhd_stable/latest_release/)
+
+    <Tabs>
+      <Tab title="Ubuntu (PPA)">
+        <Steps>
+          <Step title="Add the Ettus Research PPA">
+            ```bash
+            sudo add-apt-repository ppa:ettusresearch/uhd
+            sudo apt-get update
+            ```
+          </Step>
+          <Step title="Install UHD">
+            ```bash
+            sudo apt-get install libuhd-dev uhd-host
+            ```
+          </Step>
+          <Step title="Download FPGA images">
+            ```bash
+            sudo uhd_images_downloader
+            ```
+          </Step>
+        </Steps>
+      </Tab>
+      <Tab title="Fedora (repo)">
+        <Steps>
+          <Step title="Create the Ettus repository file">
+            Create `/etc/yum.repos.d/ettus.repo` with the following content:
+
+            ```ini
+            [ettus-uhd-stable-repo]
+            name=Ettus Research - UHD Stable $releasever-$basearch
+            baseurl=http://files.ettus.com/binaries/uhd/repo/uhd/fedora/$releasever/$basearch
+            gpgcheck=0
+            ```
+
+            <Note>
+              If you are updating an existing repository configuration, run `yum clean metadata all` before installing.
+            </Note>
+          </Step>
+          <Step title="Install UHD">
+            ```bash
+            sudo yum --enablerepo='ettus-uhd-stable-repo' install uhd
+            ```
+          </Step>
+          <Step title="Download FPGA images">
+            ```bash
+            sudo uhd_images_downloader
+            ```
+          </Step>
+        </Steps>
+      </Tab>
+    </Tabs>
+
+    ## Post-install: library path
+
+    If `libuhd.so` is not found at runtime, add its directory to your library path:
+
+    ```bash
+    sudo ldconfig
+    ```
+
+    Or add the path explicitly to `/etc/ld.so.conf`, then run `sudo ldconfig`.
+
+  </Tab>
+
+  <Tab title="macOS">
+
+    ## MacPorts (Recommended)
+
+    MacPorts is the actively supported installation method for UHD on macOS. It installs UHD together with all dependencies, and automatically downloads and installs the correct FPGA images — no post-install image download step is required.
+
+    <Steps>
+      <Step title="Install MacPorts">
+        If MacPorts is not already installed, follow the [MacPorts installation guide](https://www.macports.org/install.php). Ensure the MacPorts bin directory is prepended to your `PATH` as instructed during setup.
+
+        <Warning>
+          Do **not** set `DYLD_LIBRARY_PATH` (or any other `DYLD_*` variable) for general use. macOS provides its own robust mechanisms for library resolution, and setting these variables typically causes hard-to-diagnose issues later.
+        </Warning>
+      </Step>
+
+      <Step title="Install UHD (stable release)">
+        ```bash
+        sudo port install uhd
+        ```
+      </Step>
+
+      <Step title="(Optional) Install UHD development snapshot">
+        ```bash
+        sudo port install uhd-devel
+        ```
+
+        <Note>
+          The `uhd-devel` port is tested for basic compilation and functionality but is **not** a formal release — treat it as beta software that may contain bugs or regressions.
+        </Note>
+      </Step>
+    </Steps>
+
+    ## HomeBrew / Fink
+
+    HomeBrew and Fink can also provide UHD and its dependencies. Consult those package managers' documentation for the specific install commands and variable settings needed for your environment.
+
+    <Tip>
+      Ettus Research recommends installing **all** dependencies through a single package manager. Mixing package managers makes dependency tracking and future upgrades significantly more difficult.
+    </Tip>
+
+    After installation via any method other than MacPorts, download FPGA images manually:
+
+    ```bash
+    uhd_images_downloader
+    ```
+
+  </Tab>
+</Tabs>
+
+## After Installation
+
+<CardGroup cols={2}>
+  <Card title="FPGA Images" icon="microchip" href="/installation/fpga-images">
+    Learn how to download and manage FPGA and firmware images for every USRP device family.
+  </Card>
+  <Card title="Build from Source" icon="code" href="/installation/build-from-source">
+    Need a custom build or a version not yet in your package manager? Compile UHD directly from the Git repository.
+  </Card>
+</CardGroup>

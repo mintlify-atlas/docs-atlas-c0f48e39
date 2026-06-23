@@ -1,0 +1,167 @@
+---
+title: "Managing FPGA and Firmware Images"
+sidebarTitle: "FPGA Images"
+description: "Download, install, and load FPGA and firmware images for every USRP device using uhd_images_downloader, uhd_image_loader, and per-device methods."
+---
+
+Every USRP device requires firmware and FPGA bitstream images to operate. UHD ships with `uhd_images_downloader`, a utility that fetches the correct image set for your installed UHD version and places it in the default search directory. Some device families load images automatically at runtime, while others require you to write images to SD cards or on-board flash.
+
+## How Images Are Loaded Per Device
+
+The method used to get images onto a USRP depends on the hardware generation:
+
+<CardGroup cols={2}>
+  <Card title="USRP1" icon="bolt">
+    The host driver automatically loads both firmware and FPGA images at runtime — no manual step required.
+  </Card>
+  <Card title="USRP2" icon="sd-card">
+    Images must be written manually to the USRP2 SD card before use.
+  </Card>
+  <Card title="USRP N-Series" icon="hard-drive">
+    Images are programmed into on-board storage via `uhd_image_loader` and then loaded automatically at runtime.
+  </Card>
+  <Card title="USRP E-Series" icon="bolt">
+    The host driver automatically loads the FPGA image at runtime.
+  </Card>
+  <Card title="USRP B-Series" icon="bolt">
+    The host driver automatically loads the FPGA image at runtime.
+  </Card>
+  <Card title="USRP X-Series" icon="hard-drive">
+    Images are programmed into on-board storage via `uhd_image_loader` and then loaded automatically at runtime.
+  </Card>
+</CardGroup>
+
+## Pre-Built Images
+
+Ettus Research provides pre-built images for every supported USRP device. They are distributed in two forms:
+
+1. **Bundled with a platform installer** — the UNIX package installers place images at `/usr/share/uhd/images`; the Windows installer places them at `C:/Program Files/UHD/share/uhd/images`.
+2. **Standalone platform-independent archives** — available for download at [files.ettus.com/binaries/images/](http://files.ettus.com/binaries/images/).
+
+## Downloading Images with `uhd_images_downloader`
+
+`uhd_images_downloader` inspects the installed UHD version and downloads the matching image set, placing files in the default images directory automatically.
+
+<Steps>
+  <Step title="Run the downloader">
+    The script is installed into your `$PATH` (Linux/macOS) or can be called by full path:
+
+    <CodeGroup>
+      ```bash Linux / macOS
+      uhd_images_downloader
+      # or by full path:
+      /usr/local/lib/uhd/utils/uhd_images_downloader.py
+      ```
+
+      ```bat Windows
+      "C:\Program Files\UHD\share\uhd\utils\uhd_images_downloader.py"
+      ```
+    </CodeGroup>
+
+    By default, images are installed to `<install-prefix>/share/uhd/images`.
+  </Step>
+
+  <Step title="Verify the images directory">
+    After downloading, confirm UHD can locate the images:
+
+    ```bash
+    uhd_find_devices
+    ```
+
+    If the tool returns your device (or "No UHD Devices Found" rather than an images error), the image path is configured correctly.
+  </Step>
+</Steps>
+
+<Note>
+  On macOS with MacPorts (`sudo port install uhd`), images are downloaded and installed automatically during the package installation — you do not need to run `uhd_images_downloader` manually.
+</Note>
+
+## Image Search Path and `UHD_IMAGES_DIR`
+
+UHD searches for image files in `<install-prefix>/share/uhd/images` by default, where `<install-prefix>` is the value of `CMAKE_INSTALL_PREFIX` set at build time.
+
+You can override this by setting the `UHD_IMAGES_DIR` environment variable. It accepts a colon-separated (Linux/macOS) or semicolon-separated (Windows) list of paths ordered by preference:
+
+```bash
+export UHD_IMAGES_DIR="/opt/uhd/images:/home/user/custom_images"
+```
+
+This is particularly useful when:
+- You have installed images from an archive to a non-default location.
+- You maintain multiple image sets for different UHD versions.
+- You are working in a restricted environment without write access to the install prefix.
+
+### Installing Images from an Archive
+
+If you downloaded a standalone image archive instead of using `uhd_images_downloader`, you have two options:
+
+**Option 1 — Unpack into the install prefix:**
+
+```bash
+tar -xf uhd-images_<version>.tar.gz -C <install-prefix>/share/uhd/
+```
+
+UHD will find the images automatically at `<install-prefix>/share/uhd/images`.
+
+**Option 2 — Unpack anywhere and set `UHD_IMAGES_DIR`:**
+
+```bash
+tar -xf uhd-images_<version>.tar.gz -C /opt/my_images/
+export UHD_IMAGES_DIR=/opt/my_images/uhd-images_<version>
+```
+
+## Loading Images onto Devices (`uhd_image_loader`)
+
+For devices that store images in on-board flash (N-Series, X-Series), use `uhd_image_loader` to program the device:
+
+```bash
+uhd_image_loader --args="type=<device_type>"
+```
+
+Replace `<device_type>` with the appropriate identifier for your hardware (e.g., `n3xx`, `x3xx`, `x4xx`). Run `uhd_image_loader --help` for the full list of arguments and device types.
+
+<Warning>
+  Do not power off or disconnect the device while `uhd_image_loader` is running. Interrupting a flash-write operation can leave the device in an unbootable state.
+</Warning>
+
+## Building Images from Source
+
+The UHD source repository includes the source code needed to build firmware and FPGA images for all supported devices. Build commands for specific images are in `<uhd-repo-path>/images/Makefile`.
+
+### Xilinx FPGA Images
+
+USRP Xilinx FPGA images are built with Vivado or one of two versions of ISE, depending on the target device. Refer to the FPGA Manual for setup and build instructions specific to your device family.
+
+### ZPU Firmware
+
+The ZPU GCC compiler (`zpu-elf-gcc`) is required. Ensure it is in your `$PATH`, then see:
+
+```
+<uhd-repo-path>/firmware/zpu
+```
+
+### Altera (USRP1) FPGA
+
+Quartus is required. Pre-built `.rbf` files are available in `<uhd-repo-path>/fpga/usrp1/rbf`. Source is at:
+
+```
+<uhd-repo-path>/fpga/usrp1/toplevel/
+```
+
+### FX2 Firmware (USRP1 USB)
+
+The SDCC compiler is required along with a UNIX-like environment with CMake and Make:
+
+```
+<uhd-repo-path>/firmware/fx2
+```
+
+## Quick Reference
+
+| Task | Command |
+|------|---------|
+| Download images (default path) | `uhd_images_downloader` |
+| Set a custom images directory | `export UHD_IMAGES_DIR=/path/to/images` |
+| Flash images to N/X-Series device | `uhd_image_loader --args="type=<device_type>"` |
+| Verify UHD can find device | `uhd_find_devices` |
+| Show UHD version and config | `uhd_config_info --print-all` |

@@ -1,0 +1,228 @@
+---
+title: "Transport Layer Configuration and Performance Tuning"
+sidebarTitle: "Transport"
+description: "Tune UDP, PCIe, and USB transport parameters including frame sizes, buffer depths, and MTU to maximize USRP streaming throughput and minimize drops."
+---
+
+The transport layer sits between UHD's packet interface and the physical link to the USRP. Choosing appropriate transport parameters—frame sizes, buffer depths, and the number of concurrent transfer slots—directly determines whether your application can sustain the required sample rate without overflows or underflows. UHD selects conservative defaults that work on a wide range of systems, but most high-throughput or low-latency applications benefit from explicit tuning.
+
+## Transport Types
+
+<Tabs>
+  <Tab title="UDP (Ethernet)">
+    UDP over standard Berkeley sockets is the most common transport, used by all Ethernet-connected USRPs (N-Series, X-Series, E-Series when operated remotely). Parameters can be set as device arguments at initialization time, and for MPMD-based and X300/X310 devices they can also be overridden per-stream in the stream arguments.
+
+    **Supported devices:** USRP2, N2x0, N3x0, X3x0, X4x0, E320 (remote), B200 (via network adapter for some setups)
+  </Tab>
+  <Tab title="PCIe (NI-RIO)">
+    The NI-RIO PCIe transport is available only for the X300/X310. It requires a separate NI-RIO driver stack and provides six bidirectional DMA channels. UHD reserves two of these for command and control, leaving four available for sample data (up to 4×RX for TwinRX, or 2×RX + 2×TX for full-duplex).
+  </Tab>
+  <Tab title="USB (LibUSB)">
+    USB is used by the B100, B200, and B210. The LibUSB-based transport provides an asynchronous bulk-transfer API. Frame sizes and the number of simultaneous transfers are the primary tuning knobs.
+  </Tab>
+</Tabs>
+
+## Transport Parameters
+
+The following parameters are shared across transport types. Pass them as key=value pairs in the device argument string or, where supported, in stream arguments.
+
+### Core Parameters
+
+| Parameter | Default (1 GbE) | Default (10 GbE) | Default (100 GbE) | Notes |
+|-----------|-----------------|------------------|-------------------|-------|
+| `num_recv_frames` | 32 | 32 | 32 | Number of RX buffers; does not affect throughput |
+| `num_send_frames` | 32 | 32 | 32 | Number of TX buffers; does not affect throughput |
+| `recv_frame_size` | 1472 bytes | 8000 bytes | MTU | Capped at link's receive MTU |
+| `send_frame_size` | 1472 bytes | 8000 bytes | TX MTU | Capped at link's send MTU |
+| `recv_buff_size` | 20 ms at link rate | 20 ms at link rate | 20 ms at link rate | Socket receive buffer |
+| `send_buff_size` | 20 ms at link rate | 20 ms at link rate | 20 ms at link rate | Large values hurt TX perf |
+| `mtu` | Same as frame size | Same as frame size | Same as frame size | Overrides reported MTU in RFNoC graph |
+
+<Note>
+`num_recv_frames` and `num_send_frames` control memory allocation for the transport ring, not performance. For throughput, focus on `recv_frame_size`, `send_frame_size`, `recv_buff_size`, and system-level socket buffer limits.
+</Note>
+
+### Parameter Priority
+
+Parameters can be set in two places:
+
+1. **Device arguments** (at `multi_usrp::make()` time) — applies to all streams on that device.
+2. **Stream arguments** (at `get_rx_stream()` / `get_tx_stream()` time) — overrides device arguments for that specific stream only.
+
+Stream arguments take priority over device arguments, which take priority over UHD defaults:
+
+```
+UHD defaults < device args < stream args
+```
+
+## Setting Transport Parameters
+
+<CodeGroup>
+```cpp Device arguments (C++)
+uhd::device_addr_t args;
+args["addr"]           = "192.168.10.2";
+args["recv_frame_size"] = "8000";       // bytes per RX packet
+args["send_frame_size"] = "8000";       // bytes per TX packet
+args["recv_buff_size"]  = "50000000";   // 50 MB socket RX buffer
+auto usrp = uhd::usrp::multi_usrp::make(args);
+```
+
+```cpp Stream arguments (C++)
+uhd::stream_args_t st_args("fc32", "sc16");
+st_args.args["recv_frame_size"] = "8000";
+st_args.args["num_recv_frames"] = "64";
+auto rx_stream = usrp->get_rx_stream(st_args);
+```
+
+```bash Command line
+uhd_rx_cfile --args="addr=192.168.10.2,recv_frame_size=8000,recv_buff_size=50000000" \
+             --freq=2.4e9 --rate=25e6 --output=capture.dat
+```
+</CodeGroup>
+
+## UDP-Specific Configuration
+
+### MTU and Frame Size
+
+Every UDP packet carrying samples must fit within the network path MTU. The default frame sizes of 1472 bytes (1500-byte Ethernet MTU minus IP and UDP headers) are safe for any Gigabit Ethernet network. Increase them when your network supports jumbo frames (9000-byte MTU):
+
+```cpp
+args["recv_frame_size"] = "8000";  // safe for 9000-byte jumbo MTU
+args["send_frame_size"] = "8000";
+```
+
+The `mtu` parameter overrides the MTU value reported to the RFNoC graph (useful for remote/tunneled transports) and is independent of the underlying link type:
+
+```cpp
+args["mtu"] = "8000";
+```
+
+### Socket Buffer Sizes on Linux
+
+The kernel imposes a ceiling on socket buffer sizes. Check and raise it before running high-rate applications:
+
+```bash
+# Check current maximum
+sysctl net.core.rmem_max
+sysctl net.core.wmem_max
+
+# Increase for the current session
+sudo sysctl -w net.core.rmem_max=67108864   # 64 MB
+sudo sysctl -w net.core.wmem_max=67108864
+
+# Make permanent
+echo "net.core.rmem_max=67108864" | sudo tee -a /etc/sysctl.conf
+echo "net.core.wmem_max=67108864" | sudo tee -a /etc/sysctl.conf
+```
+
+### NIC Descriptor Tuning (Linux)
+
+Increasing the number of TX/RX descriptors in the NIC can dramatically improve performance on some hardware:
+
+```bash
+# Query current and maximum descriptor counts
+ethtool -g <interface>
+
+# Increase to maximum
+sudo ethtool -G <interface> tx 4096 rx 4096
+```
+
+### 100 GbE TX Pause Frames (X410)
+
+When using 100 GbE with the X410, enable TX pause frames on the device's SFP interfaces to ensure proper backpressure:
+
+```bash
+# Run on the X410 device (not the host)
+ethtool -A <sfp-interface> tx on
+
+# Verify
+ethtool -a <sfp-interface>
+```
+
+<Note>
+The pause frame setting is volatile and must be re-applied after each device boot or FPGA image reload. Use the `TxFlowControl=1` parameter in the device's `.network` file (via systemd v2.4.6+) to make it persistent.
+</Note>
+
+### Windows Notes
+
+For optimal UDP performance on Windows, set the `FastSendDatagramThreshold` registry key to allow 1500-byte packets through the fast path of the socket stack:
+
+```
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\AFD\Parameters
+FastSendDatagramThreshold = 1500
+```
+
+The installer provides a `.reg` file at `<install-path>/share/uhd/FastSendDatagramThreshold.reg`. A system reboot is recommended after applying the change. Also set the Windows power profile to **High performance** to avoid bandwidth ramp-up delays.
+
+### macOS Notes
+
+macOS caps `send_buff_size` and `recv_buff_size` at 1 MiB (1 048 576 bytes). Values above this limit are silently capped by the OS.
+
+## PCIe Transport (X3x0)
+
+The NI-RIO PCIe transport for X300/X310 supports the same frame/buffer parameters as UDP, plus `recv_buff_size` and `send_buff_size` which must be multiples of the system page size:
+
+```cpp
+args["recv_frame_size"] = "8000";
+args["num_recv_frames"] = "128";
+args["recv_buff_size"]  = "16384";  // must be a page-size multiple
+```
+
+See the [NI-RIO kernel module documentation](/devices/x3xx-series) for driver installation instructions.
+
+## USB Transport (B-Series)
+
+For B200/B210 USB devices, tune the number of simultaneous transfers and transfer size:
+
+```cpp
+args["num_recv_frames"] = "32";    // simultaneous async RX transfers
+args["recv_frame_size"] = "16384"; // bytes per transfer
+args["num_send_frames"] = "32";
+args["send_frame_size"] = "16384";
+```
+
+<Steps>
+  <Step title="Install udev rules (Linux)">
+    Allow non-root access by installing the udev rule:
+
+    ```bash
+    cd <install-path>/lib/uhd/utils
+    sudo cp uhd-usrp.rules /etc/udev/rules.d/
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    ```
+  </Step>
+  <Step title="Install WinUSB driver (Windows, UHD < 4.8)">
+    Download `erllc_uhd_winusb_driver.zip`, unzip it, then use Device Manager to update the driver for the unrecognized USB device. Point the wizard to the unzipped directory and select the `.inf` file. As of UHD 4.8, the Windows installer handles this automatically.
+  </Step>
+</Steps>
+
+## Performance Tuning Tips
+
+<Accordion title="Reduce receive overflows (O)">
+1. Increase `recv_buff_size` to give the kernel more space to absorb bursts.
+2. Raise `net.core.rmem_max` on Linux to allow large socket buffers.
+3. Increase NIC RX descriptors with `ethtool -G`.
+4. If your CPU is not processing samples fast enough, no amount of buffering will help—profile your receive loop first.
+</Accordion>
+
+<Accordion title="Reduce transmit underflows (U)">
+1. Avoid large `send_buff_size` values; large TX buffers increase queuing latency and can cause underflows when the buffer drains unevenly.
+2. Pre-fill the TX pipe before starting timed transmissions.
+3. Raise NIC TX descriptors with `ethtool -G`.
+</Accordion>
+
+<Accordion title="Reduce latency">
+1. Use a **smaller** `recv_frame_size` — smaller packets complete sooner at the device, reducing fill time.
+2. Investigate **Interrupt Coalescing** settings in your OS and NIC driver. Intel NICs on Linux offer fine-grained control via `ethtool -C`.
+3. Isolate the USRP network interface from other traffic to eliminate scheduling jitter.
+</Accordion>
+
+<Accordion title="Flow control (USRP2 / N2x0 UDP only)">
+The USRP2 uses host-based flow control via periodic update packets. Two parameters control update frequency:
+
+- `ups_per_sec` — update packets per second (default 20)
+- `ups_per_fifo` — update packets per FIFO-worth of bytes sent
+
+Reducing `ups_per_sec` or `ups_per_fifo` can lower overhead for high-throughput applications, but too few updates may cause TX stalls.
+</Accordion>

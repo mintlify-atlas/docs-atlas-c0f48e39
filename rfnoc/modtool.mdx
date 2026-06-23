@@ -1,0 +1,300 @@
+---
+title: "RFNoC ModTool: Scaffolding New RFNoC Blocks"
+sidebarTitle: "ModTool"
+description: "RFNoC ModTool generates all files needed for a new RFNoC block: Verilog NoC Shell, C++ controller, testbench, GRC bindings, and the block YAML descriptor."
+---
+
+RFNoC ModTool is the starting point for any new custom RFNoC block. Given a YAML description of the block's interface, it generates a complete set of template files: synthesizable Verilog (including the NoC Shell), a C++ block controller, HDL and C++ unit test scaffolding, GNU Radio Companion (GRC) bindings, and the block descriptor YAML needed by Image Builder. Rather than writing boilerplate by hand, you run ModTool once and focus immediately on implementing the actual logic.
+
+## What ModTool Generates
+
+For a block named `my_block`, ModTool produces the following files:
+
+| File | Purpose |
+|------|---------|
+| `rfnoc/blocks/my_block.yml` | Block descriptor consumed by Image Builder |
+| `rfnoc/fpga/rfnoc_block_my_block/rfnoc_block_my_block.sv` | Top-level NoC Block Verilog (instantiates NoC Shell + user logic placeholder) |
+| `rfnoc/fpga/rfnoc_block_my_block/noc_shell_my_block.sv` | Auto-generated NoC Shell with the requested interfaces |
+| `rfnoc/fpga/rfnoc_block_my_block/rfnoc_block_my_block_all.sv` | Combined include for synthesis |
+| `rfnoc/fpga/rfnoc_block_my_block/Makefile.srcs` | Source list for the Vivado build |
+| `rfnoc/testbenches/rfnoc_block_my_block_tb/rfnoc_block_my_block_tb.sv` | SystemVerilog testbench skeleton |
+| `lib/rfnoc/blocks/my_block_block_control.cpp` | C++ block controller implementation |
+| `include/rfnoc/blocks/my_block_block_control.hpp` | C++ block controller header |
+| `lib/CMakeLists.txt` | CMake build script for the C++ controller |
+| `tests/rfnoc_block_my_block_test.cpp` | C++ unit test skeleton |
+| `grc/rfnoc_my_block.block.yml` | GRC block description (if GRC is installed) |
+
+<Note>
+  ModTool also generates `rfnoc_block_my_block.cpp` which registers the block controller with UHD's block registry, so UHD automatically instantiates the right class when it encounters the block's NoC ID in the FPGA.
+</Note>
+
+## CLI Usage
+
+```bash
+# Create a new block from a YAML descriptor
+rfnoc_modtool new my_block --config my_block_args.yml
+
+# Or run interactively (GUI mode, if available)
+rfnoc_modtool new my_block
+```
+
+ModTool reads the block interface from a YAML file passed via `--config`. The tool validates the file against the `rfnoc_modtool_args` schema before generating any code.
+
+## Input YAML Format
+
+The YAML file describes every aspect of the block's interface. Below is a fully annotated example covering all major sections:
+
+```yaml
+# ─────────────────────────────────────────
+# General Parameters
+# ─────────────────────────────────────────
+schema: rfnoc_modtool_args   # Must be this exact value
+module_name: my_block        # Block name; Verilog module is rfnoc_block_my_block
+version: "1.0"               # File format version
+rfnoc_version: "1.0"         # RFNoC protocol version
+chdr_width: 64               # CHDR bus width: 64, 128, or 256
+noc_id: 0xDEADBEEF           # Unique 32-bit block identifier (hex)
+
+# ─────────────────────────────────────────
+# Optional: HDL generics
+# ─────────────────────────────────────────
+parameters:
+  NUM_CHANNELS: 2            # Exposed as a Verilog parameter
+
+hdl_parameters:
+  NUM_CHANS: "${ parameters['NUM_CHANNELS'] }"  # Mako expressions allowed
+
+# ─────────────────────────────────────────
+# Clocks
+# ─────────────────────────────────────────
+clocks:
+  - rfnoc_chdr:              # Required: CHDR data-path clock
+      freq: 'range(100e6, 500e6)'
+  - rfnoc_ctrl:              # Required: control-path clock
+      freq: 'range(10e6, 100e6)'
+  - ce:                      # User-defined compute clock
+      freq: 'range(200e6, 400e6)'
+
+# ─────────────────────────────────────────
+# Control Plane
+# ─────────────────────────────────────────
+control:
+  fpga_iface: ctrlport       # ctrlport (simple) or axis_ctrl (low-level)
+  interface_direction: slave # slave | master_slave | remote_master_slave
+  fifo_depth: 32             # Input control FIFO depth (32–4096 words)
+  clk_domain: rfnoc_ctrl     # Clock domain for control interface
+  ctrlport:
+    byte_mode: False         # Expose req_byte_en signal
+    timed: True              # Expose req_has_time / req_time signals
+    has_status: False        # Expose resp_status signal
+
+# ─────────────────────────────────────────
+# Data Plane
+# ─────────────────────────────────────────
+data:
+  fpga_iface: axis_pyld_ctxt # axis_chdr | axis_pyld_ctxt | axis_data
+  clk_domain: ce             # Clock domain for the data interface
+  inputs:
+    in0:                     # Input port name
+      context: True          # Include context (header) stream
+      item_width: 32         # Bit width of one data item (sc16 = 32 bits)
+      nipc: 1                # Items per clock cycle
+      format: sc16           # Logical data format
+      payload_fifo_depth: 32
+      context_fifo_depth: 32
+  outputs:
+    out0:
+      context: True
+      item_width: 32
+      nipc: 1
+      format: sc16
+      payload_fifo_depth: 32
+      context_fifo_depth: 32
+
+# ─────────────────────────────────────────
+# IO Ports (optional)
+# ─────────────────────────────────────────
+io_ports:
+  time:                      # Hardware timestamp access
+    type: timekeeper
+    drive: listener          # master | slave | listener | broadcaster
+
+# ─────────────────────────────────────────
+# FPGA source includes (optional)
+# ─────────────────────────────────────────
+fpga_includes:
+  - include: "fpga/rfnoc_block_my_block/Makefile.srcs"
+    make_var: "$(RFNOC_BLOCK_MY_BLOCK_SRCS)"
+```
+
+### Key Field Descriptions
+
+<CardGroup cols={2}>
+  <Card title="noc_id" icon="fingerprint">
+    A globally unique 32-bit hexadecimal value identifying this block type. All instances of the same block share the same `noc_id`; different block types must have different values. UHD uses this to look up the correct C++ controller class.
+  </Card>
+  <Card title="chdr_width" icon="ruler">
+    Must match the `chdr_width` of the FPGA image this block will be used in (64 for X3xx/N3xx, 256 for X4xx). All blocks in a single image must use the same width.
+  </Card>
+  <Card title="fpga_iface (control)" icon="sliders">
+    `ctrlport` exposes a simple strobe-based register bus — recommended for most blocks. `axis_ctrl` exposes raw 32-bit AXIS-Ctrl packets for advanced use cases requiring block-read, poll, or custom opcodes.
+  </Card>
+  <Card title="fpga_iface (data)" icon="arrows-left-right">
+    `axis_data` is the simplest: pure AXI-Stream with sideband timestamp/EOB signals. `axis_pyld_ctxt` splits context (header) from payload for blocks that inspect metadata. `axis_chdr` gives raw CHDR access.
+  </Card>
+  <Card title="nipc" icon="gauge">
+    Number of items per clock cycle. For 200 MHz FPGA clock and 400 MS/s data rate at 32 bits/item, you need `nipc = 2`. Must be a power of two.
+  </Card>
+  <Card title="io_ports" icon="plug">
+    Optional hardware connections to device-specific signals: timestamp (`timekeeper`), custom IO signatures, or other NoC block outputs. The `drive` field controls directionality.
+  </Card>
+</CardGroup>
+
+## Generated File Walkthrough
+
+### Verilog NoC Block Template
+
+After running ModTool, the generated `rfnoc_block_my_block.sv` provides a skeleton with the NoC Shell already instantiated and all interface signals wired up. You fill in the user logic between the `BEGIN USER CODE` and `END USER CODE` markers:
+
+```verilog
+module rfnoc_block_my_block #(
+  parameter int CHDR_W  = 64,
+  parameter int NUM_CHANS = 2,
+  // ... other parameters ...
+)(
+  input  logic rfnoc_chdr_clk,
+  input  logic rfnoc_chdr_rst,
+  input  logic rfnoc_ctrl_clk,
+  input  logic rfnoc_ctrl_rst,
+  // CHDR data ports (backend interface to framework)
+  input  logic [CHDR_W-1:0] s_rfnoc_chdr_tdata,
+  // ... more backend ports ...
+);
+
+  // NoC Shell instantiation (generated, do not modify)
+  noc_shell_my_block #(.CHDR_W(CHDR_W), ...) noc_shell_my_block_i (
+    // ... wiring ...
+  );
+
+  //-----------------------------------------------
+  // BEGIN USER CODE
+  //-----------------------------------------------
+  // Your DSP logic goes here.
+  // Connect to: m_in0_payload_*, s_out0_payload_*
+  //             m_ctrlport_*, m_ctrlport_resp_*
+  //-----------------------------------------------
+
+  //-----------------------------------------------
+  // END USER CODE
+  //-----------------------------------------------
+
+endmodule
+```
+
+### C++ Controller Template
+
+The generated `my_block_block_control.cpp` includes the RFNOC constructor macro, register address constants, and placeholder comments for properties and action handlers:
+
+```cpp
+class my_block_block_control_impl : public my_block_block_control
+{
+public:
+    RFNOC_BLOCK_CONSTRUCTOR(my_block_block_control)
+    {
+        // TODO: Read capability registers
+        // TODO: Register properties
+        // TODO: Add property resolvers
+        // TODO: Register action handlers
+    }
+
+private:
+    // Register addresses (match your HDL)
+    static constexpr uint32_t REG_MY_PARAM = 0x00;
+
+    // Declare properties here
+    // property_t<int> _my_param{"my_param", 0, {res_source_info::USER, 0}};
+};
+
+UHD_RFNOC_BLOCK_REGISTER_DIRECT(
+    my_block_block_control, MY_BLOCK_NOC_ID, "MyBlock",
+    CLOCK_KEY_GRAPH, "bus_clk")
+```
+
+## Complete Development Flow
+
+<Steps>
+  <Step title="Write the block descriptor YAML">
+    Create `my_block_args.yml` describing the block's clocks, control interface, data ports, and any IO ports. Choose a unique `noc_id`.
+  </Step>
+  <Step title="Run ModTool to generate scaffolding">
+    ```bash
+    rfnoc_modtool new my_block --config my_block_args.yml
+    ```
+    This creates all source files. From this point, you have a fully compilable (though not functional) block.
+  </Step>
+  <Step title="Implement the HDL user logic">
+    Open `rfnoc_block_my_block.sv` and fill in the DSP logic between the `BEGIN USER CODE` / `END USER CODE` markers. Implement the ctrlport slave to service register reads and writes from the C++ controller.
+  </Step>
+  <Step title="Write HDL simulation tests">
+    Add test cases to `rfnoc_block_my_block_tb.sv`. The testbench skeleton already instantiates the CHDR and ctrlport BFMs — add stimulus and checking.
+  </Step>
+  <Step title="Implement the C++ block controller">
+    Fill in `my_block_block_control.cpp`: declare `property_t<>` members, implement `register_property()` + `add_property_resolver()` calls, expose a user-facing API, and add action handlers.
+  </Step>
+  <Step title="Add the block to an Image Builder YAML">
+    Reference `my_block.yml` in an image configuration file and add the necessary connections. See the [Image Builder](./image-builder) page for details.
+
+    ```yaml
+    noc_blocks:
+      my_block_0:
+        block_desc: 'my_block.yml'
+        parameters:
+          NUM_CHANNELS: 2
+    ```
+  </Step>
+  <Step title="Build, flash, and test">
+    ```bash
+    # Build the FPGA image
+    rfnoc_image_builder -y my_image.yml -F /path/to/fpga -t X310_HG -I .
+
+    # Flash to the USRP
+    uhd_image_loader --args="type=x300,addr=192.168.10.2" --fpga-path=my_image.bit
+
+    # Verify the block is discovered
+    uhd_usrp_probe --args="addr=192.168.10.2"
+    # Should print: RFNoC blocks: ... MyBlock#0 ...
+    ```
+  </Step>
+</Steps>
+
+## Out-of-Tree Module Layout
+
+When developing a block outside the main UHD repository, ModTool creates an **out-of-tree (OOT) module** directory structure. Pass this directory to Image Builder with `-I` so it can find your block descriptor and Makefile sources:
+
+```
+my_oot_module/
+├── CMakeLists.txt
+├── rfnoc/
+│   └── blocks/
+│       └── my_block.yml          # Block descriptor
+├── rfnoc/testbenches/
+│   └── rfnoc_block_my_block_tb/
+│       └── rfnoc_block_my_block_tb.sv
+├── fpga/
+│   └── rfnoc_block_my_block/
+│       ├── Makefile.srcs
+│       ├── rfnoc_block_my_block.sv
+│       └── noc_shell_my_block.sv
+├── lib/
+│   └── rfnoc/blocks/
+│       └── my_block_block_control.cpp
+├── include/
+│   └── rfnoc/blocks/
+│       └── my_block_block_control.hpp
+└── grc/
+    └── rfnoc_my_block.block.yml  # GRC binding
+```
+
+<Tip>
+  Add your OOT module's `lib` directory to `CMAKE_PREFIX_PATH` when building UHD applications so that the `my_block_block_control` dynamic library is found and loaded automatically. Alternatively, set the `UHD_MODULE_PATH` environment variable to the directory containing the compiled `.so` file.
+</Tip>

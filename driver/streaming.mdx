@@ -1,0 +1,306 @@
+---
+title: "RX and TX IQ Sample Streaming with UHD Streamers"
+sidebarTitle: "Streaming"
+description: "Stream IQ samples between host and USRP using UHD rx_streamer and tx_streamer, with stream modes, metadata fields, and overflow/underrun handling."
+---
+
+Streaming in UHD refers to moving IQ sample data between the host computer and the USRP device. Two objects handle this: `uhd::rx_streamer` carries samples from the device to the host, and `uhd::tx_streamer` carries samples from the host to the device. Both are created from a `uhd::stream_args_t` object that specifies data formats and channel mapping, and both expose a simple blocking API — `recv()` and `send()` — for the actual data transfer.
+
+## Stream Args
+
+Before creating either streamer type, you must configure a `uhd::stream_args_t`. The two most important fields are `cpu_format` (the sample type in host memory) and `otw_format` (the sample type over the link layer).
+
+```cpp
+// Create stream args: fc32 in host memory, sc16 over the wire
+uhd::stream_args_t stream_args("fc32", "sc16");
+
+// Optional: set samples per packet (reduces latency)
+stream_args.args["spp"] = std::to_string(200);
+
+// Optional: specify channels (defaults to channel 0)
+stream_args.channels = {0, 1};  // two-channel stream
+```
+
+### CPU Format Reference
+
+| String | C++ Type | Notes |
+|---|---|---|
+| `fc64` | `std::complex<double>` | Highest precision |
+| `fc32` | `std::complex<float>` | Most common choice |
+| `sc16` | `std::complex<int16_t>` | 16-bit integer IQ |
+| `sc8` | `std::complex<int8_t>` | 8-bit integer IQ |
+
+### OTW Format Reference
+
+| String | Devices | Notes |
+|---|---|---|
+| `sc16` | B2xx, N2xx, N3xx, E3xx, X3xx, X4xx | Default; full dynamic range |
+| `sc12` | B2xx | Intermediate precision |
+| `sc8` | B2xx, N2xx | 2× bandwidth, reduced dynamic range |
+| `fc32` | B2xx | Float over the wire |
+
+## RX Streaming
+
+Receiving samples involves three steps: create the streamer, issue a stream command to start data flow, then loop on `recv()`.
+
+<Tabs>
+  <Tab title="C++">
+    <Steps>
+      <Step title="Create the RX streamer">
+        ```cpp
+        uhd::stream_args_t stream_args("fc32", "sc16");
+        uhd::rx_streamer::sptr rx_stream = usrp->get_rx_stream(stream_args);
+        ```
+      </Step>
+      <Step title="Allocate a receive buffer">
+        ```cpp
+        std::vector<std::complex<float>> buff(rx_stream->get_max_num_samps());
+        uhd::rx_metadata_t md;
+        ```
+      </Step>
+      <Step title="Issue the stream command">
+        ```cpp
+        uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+        stream_cmd.stream_now = true;
+        rx_stream->issue_stream_cmd(stream_cmd);
+        ```
+      </Step>
+      <Step title="Receive samples in a loop">
+        ```cpp
+        while (keep_running) {
+            size_t num_rx_samps = rx_stream->recv(
+                &buff.front(), buff.size(), md, 3.0 /*timeout s*/);
+
+            if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_TIMEOUT) {
+                std::cerr << "Timeout while streaming\n";
+                break;
+            }
+            if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW) {
+                std::cerr << "Overflow detected\n";
+                continue; // keep going in continuous mode
+            }
+            // process buff[0..num_rx_samps-1]
+        }
+        ```
+      </Step>
+      <Step title="Stop the stream">
+        ```cpp
+        uhd::stream_cmd_t stop_cmd(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS);
+        rx_stream->issue_stream_cmd(stop_cmd);
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import uhd
+    import numpy as np
+
+    usrp = uhd.usrp.MultiUSRP("type=x300")
+    stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    rx_streamer = usrp.get_rx_stream(stream_args)
+
+    rx_metadata = uhd.types.RXMetadata()
+    recv_buffer = np.zeros(rx_streamer.get_max_num_samps(), dtype=np.complex64)
+
+    # Start continuous streaming
+    stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
+    stream_cmd.stream_now = True
+    rx_streamer.issue_stream_cmd(stream_cmd)
+
+    run_condition = True
+    while run_condition:
+        samps = rx_streamer.recv(recv_buffer, rx_metadata)
+        # process recv_buffer[:samps]
+
+    # Stop streaming
+    stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+    rx_streamer.issue_stream_cmd(stream_cmd)
+    ```
+  </Tab>
+</Tabs>
+
+## TX Streaming
+
+Transmitting samples involves creating the streamer, then calling `send()` in a loop. TX metadata controls burst boundaries and timed transmissions.
+
+<Tabs>
+  <Tab title="C++">
+    <Steps>
+      <Step title="Create the TX streamer">
+        ```cpp
+        uhd::stream_args_t stream_args("fc32", "sc16");
+        uhd::tx_streamer::sptr tx_stream = usrp->get_tx_stream(stream_args);
+        ```
+      </Step>
+      <Step title="Prepare metadata and buffer">
+        ```cpp
+        uhd::tx_metadata_t md;
+        md.start_of_burst = true;
+        md.end_of_burst   = false;
+        md.has_time_spec  = false; // send immediately
+
+        std::vector<std::complex<float>> buff(tx_stream->get_max_num_samps(), {0, 0});
+        ```
+      </Step>
+      <Step title="Send samples in a loop">
+        ```cpp
+        while (keep_running) {
+            // fill buff with your signal here
+            size_t num_tx_samps = tx_stream->send(
+                &buff.front(), buff.size(), md, 3.0 /*timeout s*/);
+            md.start_of_burst = false; // only first packet is SOB
+        }
+        ```
+      </Step>
+      <Step title="Send end-of-burst">
+        ```cpp
+        md.end_of_burst = true;
+        tx_stream->send("", 0, md);
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import uhd
+    import numpy as np
+
+    usrp = uhd.usrp.MultiUSRP("type=x300")
+    stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    tx_streamer = usrp.get_tx_stream(stream_args)
+
+    tx_metadata = uhd.types.TXMetadata()
+    tx_buffer = np.zeros(1000000, dtype=np.complex64)
+    # fill tx_buffer with your waveform...
+
+    while True:
+        samps = tx_streamer.send(tx_buffer, tx_metadata)
+    ```
+  </Tab>
+</Tabs>
+
+## Stream Modes
+
+The `stream_cmd_t` (C++) / `StreamCMD` (Python) controls *how* the device streams to the host. Four modes are available:
+
+| C++ Enum | Python Enum | Description |
+|---|---|---|
+| `STREAM_MODE_START_CONTINUOUS` | `StreamMode.start_cont` | Stream indefinitely until stopped |
+| `STREAM_MODE_STOP_CONTINUOUS` | `StreamMode.stop_cont` | Stop an ongoing continuous stream |
+| `STREAM_MODE_NUM_SAMPS_AND_DONE` | `StreamMode.num_samps_and_done` | Stream exactly `num_samps`, then stop |
+| `STREAM_MODE_NUM_SAMPS_AND_MORE` | `StreamMode.num_samps_and_more` | Stream exactly `num_samps`, expect another command immediately after |
+
+### Timed Start Example
+
+To start streaming at a precise future time (required for multi-device phase alignment):
+
+```cpp
+uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+stream_cmd.stream_now = false;
+stream_cmd.time_spec  = usrp->get_time_now() + uhd::time_spec_t(0.1); // 100 ms from now
+rx_stream->issue_stream_cmd(stream_cmd);
+```
+
+### Finite Burst Example
+
+```cpp
+uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+stream_cmd.num_samps   = 10000;
+stream_cmd.stream_now  = true;
+rx_stream->issue_stream_cmd(stream_cmd);
+```
+
+## RX Metadata
+
+Every `recv()` call fills an `rx_metadata_t` structure. Always check `error_code` before processing samples.
+
+| Field | Type | Description |
+|---|---|---|
+| `has_time_spec` | `bool` | Whether `time_spec` is valid |
+| `time_spec` | `time_spec_t` | Timestamp of the first sample in the buffer |
+| `start_of_burst` | `bool` | First packet of a burst |
+| `end_of_burst` | `bool` | Last packet of a burst |
+| `out_of_sequence` | `bool` | Transport dropped a packet (sequence error) |
+| `more_fragments` | `bool` | Buffer was too small; more data pending |
+| `fragment_offset` | `size_t` | Sample index of this fragment within its packet |
+| `error_code` | `error_code_t` | See table below |
+
+### RX Error Codes
+
+| Error Code | Value | Meaning |
+|---|---|---|
+| `ERROR_CODE_NONE` | `0x0` | No error |
+| `ERROR_CODE_TIMEOUT` | `0x1` | No packet received within timeout |
+| `ERROR_CODE_LATE_COMMAND` | `0x2` | Stream command arrived too late |
+| `ERROR_CODE_BROKEN_CHAIN` | `0x4` | Expected another stream command |
+| `ERROR_CODE_OVERFLOW` | `0x8` | Receive buffer filled or sequence error (check `out_of_sequence`) |
+| `ERROR_CODE_ALIGNMENT` | `0xc` | Multi-channel alignment failed |
+| `ERROR_CODE_BAD_PACKET` | `0xf` | Packet could not be parsed |
+
+## TX Metadata
+
+The `tx_metadata_t` structure is passed *into* each `send()` call to describe the buffer contents.
+
+| Field | Type | Description |
+|---|---|---|
+| `has_time_spec` | `bool` | Set `true` to transmit at the time in `time_spec` |
+| `time_spec` | `time_spec_t` | Scheduled transmit time for the first sample |
+| `start_of_burst` | `bool` | Set `true` on the first `send()` of a burst |
+| `end_of_burst` | `bool` | Set `true` on the last `send()` of a burst |
+
+### Timed TX Burst
+
+```cpp
+uhd::tx_metadata_t md;
+md.start_of_burst = true;
+md.end_of_burst   = false;
+md.has_time_spec  = true;
+md.time_spec      = usrp->get_time_now() + uhd::time_spec_t(0.1);
+
+size_t num_tx_samps = tx_stream->send(&buff.front(), buff.size(), md);
+```
+
+## Overflow and Underflow Handling
+
+<CardGroup cols={2}>
+  <Card title="Overflow (RX)" icon="arrow-down">
+    **What it is:** The device is producing samples faster than `recv()` is consuming them. Buffers back up.
+
+    **What UHD does:** Prints `"O"` (or `"D"`) to stdout and sets `ERROR_CODE_OVERFLOW` in the RX metadata.
+
+    **Recovery:** In continuous streaming mode the device resets itself once the FIFO clears — just keep calling `recv()`. In finite/triggered modes you may need to re-issue a stream command.
+  </Card>
+  <Card title="Underflow (TX)" icon="arrow-up">
+    **What it is:** The device is consuming samples faster than `send()` is supplying them.
+
+    **What UHD does:** Prints `"U"` to stdout and pushes a message into the async message stream.
+
+    **Recovery:** Call `send()` more frequently, or use the `streamer=replay_buffered` stream arg to buffer data in FPGA DRAM via the Replay block (requires RFNoC-capable device with Replay block in the FPGA image).
+  </Card>
+</CardGroup>
+
+<Note>
+`"O"` and `"U"` prints are generally harmless informational messages indicating the host cannot sustain the requested rate. They do not by themselves indicate a fatal error.
+</Note>
+
+### Checking Async TX Messages
+
+TX underflows and other asynchronous events are reported via the async message channel:
+
+```cpp
+uhd::async_metadata_t async_md;
+while (tx_stream->recv_async_msg(async_md, 0.0 /*non-blocking*/)) {
+    if (async_md.event_code == uhd::async_metadata_t::EVENT_CODE_UNDERFLOW) {
+        std::cerr << "TX underflow detected\n";
+    }
+}
+```
+
+## Thread Safety
+
+<Warning>
+`recv()` and `send()` are **not** thread-safe on a single streamer instance. Do not call `recv()` from two threads concurrently on the same `rx_streamer`, or `send()` from two threads on the same `tx_streamer`. Multiple *different* streamers may be called from separate threads simultaneously.
+</Warning>
+
+All three fast-path methods — `tx_streamer::send()`, `rx_streamer::recv()`, and `tx_streamer::recv_async_msg()` — can safely coexist in different threads.

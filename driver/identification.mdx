@@ -1,0 +1,168 @@
+---
+title: "Discovering and Identifying USRP Devices with UHD"
+sidebarTitle: "Identification"
+description: "Learn how to find and identify USRP devices by serial number, IP address, type, name, or USB VID/PID using uhd_find_devices and the UHD API."
+---
+
+Every USRP device exposes a set of key/value string pairs that uniquely identify it on the host system. These pairs — called device address arguments — can be used to narrow down which device UHD connects to, whether you are running a command-line utility or calling the API programmatically. The same `--args` string you pass to `uhd_find_devices` is accepted by nearly every UHD example and application.
+
+## Device Address Keys
+
+The table below lists the standard identifiers available on all or most USRP devices. Every identifier is passed as a key/value pair in an `--args` string or as a field in `uhd::device_addr_t`.
+
+| Identifier | Key | Notes | Devices | Example Value |
+|---|---|---|---|---|
+| Serial Number | `serial` | Globally unique identifier | All devices | `12345678` |
+| IP Address | `addr` | Unique identifier on a network | All network devices | `192.168.10.2` |
+| Resource | `resource` | Unique identifier for USRP RIO devices over PCIe | X3x0 | `RIO0` |
+| Name | `name` | Optional user-set identifier or hostname | All devices | `lab1_xcvr` |
+| Type | `type` | Hardware series identifier | All devices | `usrp1`, `b200`, `x300`, `n3xx`, `x4xx` |
+| Vendor/Product ID | `vid`, `pid` | Both must be provided together with `type` | All USB devices | `vid=0x04b4,pid=0x8613` |
+
+<Note>
+The device address string serves double duty: it identifies the device *and* carries configuration options such as `master_clock_rate`. See [Configuring USRP Devices](/driver/configuration) for the full list of configuration keys.
+</Note>
+
+## Discovering Devices from the Command Line
+
+The `uhd_find_devices` utility scans your system for all supported USRP devices and prints an enumerated list of discovered devices together with their addresses. Run it with no arguments to discover everything, or add `--args` to filter results.
+
+<Steps>
+  <Step title="Find all attached devices">
+    ```bash
+    uhd_find_devices
+    ```
+  </Step>
+  <Step title="Filter by device type">
+    ```bash
+    uhd_find_devices --args="type=usrp1"
+    ```
+  </Step>
+  <Step title="Filter by serial number">
+    ```bash
+    uhd_find_devices --args="serial=12345678"
+    ```
+  </Step>
+  <Step title="Filter by user-assigned name">
+    ```bash
+    uhd_find_devices --args="name=lab1_xcvr"
+    ```
+  </Step>
+  <Step title="Combine filters">
+    ```bash
+    uhd_find_devices --args="type=usrp1,name=lab1_xcvr"
+    ```
+  </Step>
+</Steps>
+
+### Probing Device Properties
+
+Once you know which device you want, use `uhd_usrp_probe` to construct a live connection to the device and print all of its properties — detected daughterboards, frequency ranges, gain ranges, and more.
+
+```bash
+uhd_usrp_probe --args "<device-specific-address-args>"
+```
+
+## Device Discovery via the API
+
+The `uhd::device::find()` call searches for devices and returns a `uhd::device_addrs_t` vector. Each element is a `uhd::device_addr_t` map that can be inspected or passed directly to `uhd::usrp::multi_usrp::make()`.
+
+<Tabs>
+  <Tab title="C++">
+    <Steps>
+      <Step title="Discover all devices">
+        An empty hint discovers every device visible to UHD:
+
+        ```cpp
+        uhd::device_addr_t hint; // empty hint = find all
+        uhd::device_addrs_t dev_addrs = uhd::device::find(hint);
+        ```
+      </Step>
+      <Step title="Filter by type">
+        Populate the hint to narrow the search:
+
+        ```cpp
+        uhd::device_addr_t hint;
+        hint["type"] = "usrp1";
+        uhd::device_addrs_t dev_addrs = uhd::device::find(hint);
+        ```
+      </Step>
+      <Step title="Filter by serial number">
+        ```cpp
+        uhd::device_addr_t hint;
+        hint["serial"] = "12345678";
+        uhd::device_addrs_t dev_addrs = uhd::device::find(hint);
+        ```
+      </Step>
+      <Step title="Open the first discovered device">
+        ```cpp
+        if (!dev_addrs.empty()) {
+            uhd::usrp::multi_usrp::sptr usrp =
+                uhd::usrp::multi_usrp::make(dev_addrs[0]);
+        }
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import uhd
+
+    # Find all devices
+    dev_addrs = uhd.find("")
+
+    # Filter by type
+    dev_addrs = uhd.find("type=b200")
+
+    # Filter by serial number
+    dev_addrs = uhd.find("serial=12345678")
+
+    # Open the first discovered device
+    if dev_addrs:
+        usrp = uhd.usrp.MultiUSRP(str(dev_addrs[0]))
+    ```
+  </Tab>
+</Tabs>
+
+## Naming a USRP Device
+
+For convenience, you can burn a custom name into the device's EEPROM so it can be found by name rather than by serial number or IP address.
+
+<Steps>
+  <Step title="Set a custom name">
+    Run the `usrp_burn_mb_eeprom` utility from the UHD utils directory:
+
+    ```bash
+    cd <install-path>/lib/uhd/utils
+    ./usrp_burn_mb_eeprom --args=<optional device args> --values="name=lab1_xcvr"
+    ```
+
+    A name must be composed of ASCII characters and must be 0–20 characters long. Names are not required to be unique across devices.
+  </Step>
+  <Step title="Find the device by name">
+    ```bash
+    uhd_find_devices --args="name=lab1_xcvr"
+    ```
+  </Step>
+</Steps>
+
+## MPM Device Reachability Check
+
+By default, UHD attempts to open an RPC connection to each IP address reported by MPM-based devices (N3xx, X4xx series) to verify reachability. This check can be slow, especially over direct-cabled QSFP connections where some IPs may time out.
+
+<Tabs>
+  <Tab title="Disable check (faster discovery)">
+    ```bash
+    uhd_find_devices --args mpm_check_reachability=no
+    ```
+  </Tab>
+  <Tab title="Enable check (default)">
+    ```bash
+    uhd_find_devices --args mpm_check_reachability=yes
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+You can set `mpm_check_reachability` permanently in the `[Global]` section of your `uhd.conf` file. The `--args` option always overrides the config file value.
+</Tip>

@@ -1,0 +1,151 @@
+---
+title: "USRP Device Families and SDR Hardware Selection Guide"
+sidebarTitle: "Overview"
+description: "Compare all USRP hardware families—B Series, N Series, X3xx, X4xx, and E Series—and choose the right SDR for your bandwidth, budget, and deployment."
+---
+
+The USRP (Universal Software Radio Peripheral) product line spans five major hardware families, each optimized for a different set of performance, connectivity, and deployment requirements. Whether you need a low-cost USB radio for learning SDR, a rack-mounted platform for high-bandwidth signal acquisition, or a self-contained embedded SDR for field deployment, there is a USRP variant designed for the task. This guide maps each family to its core strengths and helps you choose the right platform before diving into the family-specific pages.
+
+## Device Families at a Glance
+
+<CardGroup cols={2}>
+  <Card title="B Series" icon="usb" href="/devices/b-series">
+    **B200 · B210 · B200mini · B205mini · B206mini**
+
+    USB 3.0 bus-powered radios covering 70 MHz – 6 GHz. The lowest-cost entry point into the USRP ecosystem—no external power supply required for most variants.
+  </Card>
+  <Card title="N Series" icon="network-wired" href="/devices/n-series">
+    **N300 · N310 · N320 · N321**
+
+    Network-connected SDR platform with dual SFP+ ports, embedded ARM Linux, and the MPM architecture. GPSDO option and White Rabbit time synchronization.
+  </Card>
+  <Card title="X3xx Series" icon="server" href="/devices/x3xx-series">
+    **X300 · X310**
+
+    High-performance Kintex-7 FPGA platform with two daughterboard slots, dual SFP+ Ethernet, and optional PCIe (MXI) connectivity. Up to 160 MHz RF bandwidth with 16-bit samples.
+  </Card>
+  <Card title="X4xx Series" icon="microchip" href="/devices/x4xx-series">
+    **X410 · X420 · X440**
+
+    Fourth-generation RFSoC-based platform with dual QSFP28 100 GigE ports, Zynq UltraScale+ processing, and up to 2048 Msps sampling rate. Rack-mountable.
+  </Card>
+  <Card title="E Series" icon="circle-dot" href="/devices/e-series">
+    **E310 · E312 · E313 · E320**
+
+    Embedded SDR running Linux on an ARM/Zynq SoC. The E310 family supports battery operation; the E320 adds SFP+ network connectivity and an internal GPSDO.
+  </Card>
+</CardGroup>
+
+---
+
+## Connection Types by Family
+
+| Family | USB 3.0 | 1 GigE | 10 GigE | 100 GigE | PCIe (MXI) |
+|--------|---------|--------|---------|----------|------------|
+| B Series | ✅ | — | — | — | — |
+| N Series | — | ✅ (mgmt) | ✅ (SFP+) | — | — |
+| X3xx Series | — | ✅ (SFP+) | ✅ (SFP+) | — | ✅ |
+| X4xx Series | — | ✅ (RJ45) | ✅ (QSFP28) | ✅ (QSFP28) | — |
+| E Series (E320) | — | ✅ (RJ45) | ✅ (SFP+) | — | — |
+| E Series (E31x) | — | ✅ (RJ45) | — | — | — |
+
+<Note>
+The N Series and X4xx Series both use DHCP on their management RJ45 port. Data streaming happens over the SFP+ or QSFP28 interfaces at higher speeds. Network configuration affects achievable sample rates.
+</Note>
+
+---
+
+## Choosing the Right Device
+
+<Tabs>
+  <Tab title="Entry Level / Learning">
+    The **B Series** is the right starting point for new users, students, and anyone building a portable or laptop-connected radio. Key reasons to choose B Series:
+
+    - Bus-powered over USB 3.0—no external supply for B200, B200mini, B205mini
+    - Covers 70 MHz – 6 GHz with a single integrated RF frontend
+    - Lowest cost in the USRP family
+    - Supported by all UHD applications and GNU Radio out of the box
+
+    **Recommended models:** B200mini or B205mini for compact single-channel use; B210 for 2×2 MIMO.
+  </Tab>
+  <Tab title="Lab / Networked">
+    The **X3xx Series** and **N Series** are the workhorses of research labs. Both offer:
+
+    - Multiple daughterboard slots (X3xx) or pre-installed multi-channel RF (N Series)
+    - SFP+ Ethernet for reliable, high-throughput streaming
+    - GPIO, external PPS, and 10 MHz reference inputs for tight synchronization
+
+    **Choose X3xx** if you need interchangeable daughterboards (WBX, SBX, UBX, CBX, TwinRX) and optionally PCIe connectivity.
+
+    **Choose N Series** if you want an embedded Linux system, the MPM architecture, and integrated GPS discipline without daughterboard swapping.
+  </Tab>
+  <Tab title="High Bandwidth">
+    The **X4xx Series** is designed for applications that require the widest analog bandwidth and highest sample rates:
+
+    - X410: 4 channels, up to 400 MHz bandwidth per channel
+    - X420: 2 channels, up to 1 GHz bandwidth per channel
+    - X440: 8 channels, up to 2048 Msps (direct sampling, 30 MHz – 4 GHz)
+
+    QSFP28 ports support 4×10 GbE or 1×100 GbE per port. An embedded Zynq UltraScale+ RFSoC handles both the FPGA fabric and RF data converters on a single die.
+  </Tab>
+  <Tab title="Embedded / Field Deploy">
+    The **E Series** runs the USRP application directly on an embedded ARM processor without a host computer:
+
+    - E310/E312/E313: compact, battery-capable, with internal GPS and IMU
+    - E320: higher-performance board with SFP+ networking and internal GPSDO
+
+    Both families run OpenEmbedded Linux and the MPM daemon. RFNoC applications can execute locally on the device. Maximum over-the-network sample rates are 4.4 MS/s (E31x) and 6.4 MS/s (E320) via RJ45.
+  </Tab>
+  <Tab title="Synchronization">
+    When phase-coherent multi-channel or multi-device operation is required, consider:
+
+    - **N Series**: Internal GPSDO, external 10/20/25 MHz reference, White Rabbit (IEEE 1588 extension) via SFP0
+    - **X3xx Series**: Internal GPSDO option, OctoClock (CDA-2990) for distributing 10 MHz + PPS to multiple devices
+    - **X4xx Series**: Internal GPS-disciplined OCXO, `nsync` eCPRI clock source, external 10 MHz SMA input
+
+    All families accept an external 1 PPS input and a 10 MHz reference clock for tight coherence between separate units.
+  </Tab>
+</Tabs>
+
+---
+
+## FPGA and Software Architecture
+
+All USRP devices are driven by the **USRP Hardware Driver (UHD)**. The `uhd::usrp::multi_usrp` API provides a uniform interface regardless of the underlying hardware. Newer devices also expose the **RFNoC** (RF Network on Chip) framework for building custom signal processing pipelines in FPGA fabric.
+
+| Family | FPGA | Architecture |
+|--------|------|--------------|
+| B Series | Xilinx Spartan-6 | Classic UHD (legacy streaming) |
+| N Series | Xilinx Zynq (XC7Z100 / XC7Z035) | MPM + RFNoC |
+| X3xx Series | Xilinx Kintex-7 | Classic UHD + RFNoC |
+| X4xx Series | Xilinx Zynq UltraScale+ RFSoC | MPM + RFNoC |
+| E Series | Xilinx Zynq (XC7Z020 / XC7Z045) | MPM + RFNoC |
+
+<Tip>
+MPM (Modular Peripheral Manager) is a hardware daemon that runs on the embedded ARM processor of N Series, X4xx, and E Series devices. It manages hardware initialization and exposes an RPC interface that UHD communicates with from the host.
+</Tip>
+
+---
+
+## Quick Reference: Device Arguments
+
+Every UHD application accepts device arguments at initialization. The `type` key selects the device family:
+
+```cpp
+// B Series
+auto usrp = uhd::usrp::multi_usrp::make("type=b200");
+
+// N Series
+auto usrp = uhd::usrp::multi_usrp::make("type=n3xx,addr=192.168.10.2");
+
+// X3xx Series
+auto usrp = uhd::usrp::multi_usrp::make("type=x300,addr=192.168.10.2");
+
+// X4xx Series
+auto usrp = uhd::usrp::multi_usrp::make("type=x4xx,addr=192.168.10.2");
+
+// E Series
+auto usrp = uhd::usrp::multi_usrp::make("type=e3xx,addr=192.168.10.2");
+```
+
+For detailed device-specific arguments, master clock rates, FPGA image flavors, and synchronization options, see each family's dedicated page.

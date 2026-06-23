@@ -1,0 +1,433 @@
+---
+title: "rx_streamer and tx_streamer API Reference"
+sidebarTitle: "Streamers"
+description: "Full reference for UHD streamers: stream_args_t, rx_streamer, tx_streamer, and metadata types for receiving and transmitting IQ samples."
+---
+
+Streamers are the host-side objects that move IQ samples between your application and USRP hardware. An `rx_streamer` receives samples from the device into host memory; a `tx_streamer` sends samples from host memory to the device. Both are created by calling `get_rx_stream()` / `get_tx_stream()` on a `multi_usrp` (or `rfnoc_graph`) object, and neither is thread-safe — only one thread should call `recv()` or `send()` on a given streamer at a time.
+
+```cpp
+#include <uhd/stream.hpp>
+```
+
+---
+
+## stream_args_t
+
+`stream_args_t` is passed to `get_rx_stream()` or `get_tx_stream()` to specify the data formats and channel mapping.
+
+```cpp
+struct stream_args_t {
+    std::string            cpu_format;
+    std::string            otw_format;
+    uhd::device_addr_t     args;
+    std::vector<size_t>    channels;
+};
+```
+
+<ParamField path="cpu_format" type="std::string" required>
+  Format of samples in host memory. See the table below for supported values.
+</ParamField>
+
+<ParamField path="otw_format" type="std::string" required>
+  Over-the-wire (transport) format used between the host and device. Using a narrower format reduces link bandwidth at the cost of dynamic range.
+</ParamField>
+
+<ParamField path="args" type="uhd::device_addr_t">
+  Optional key/value arguments. Notable keys:
+  - `"spp"` — samples per packet (reduces packet size and latency).
+  - `"fullscale"` — full-scale amplitude for floating-point formats (default `1.0`).
+  - `"peak"` — fractional peak level used for sc8 wire-format scaling.
+  - `"underflow_policy"` — TX behavior on underflow: `"next_burst"` or `"next_packet"`.
+</ParamField>
+
+<ParamField path="channels" type="std::vector<size_t>">
+  List of channel indices to include in this streamer. Default is `{0}`. For multi-channel streaming, list all channels in the desired order.
+</ParamField>
+
+### CPU Format Values
+
+| Value | C++ Type | Description |
+|---|---|---|
+| `"fc64"` | `std::complex<double>` | 64-bit float complex (128 bits/sample) |
+| `"fc32"` | `std::complex<float>` | 32-bit float complex (64 bits/sample) — most common |
+| `"sc16"` | `std::complex<int16_t>` | 16-bit signed integer complex (32 bits/sample) |
+| `"sc8"` | `std::complex<int8_t>` | 8-bit signed integer complex (16 bits/sample) |
+
+### OTW Format Values
+
+| Value | Wire Encoding | Notes |
+|---|---|---|
+| `"sc16"` | Q16 I16 | Default; full dynamic range |
+| `"sc8"` | Q8 I8 (packed pairs) | Halves link bandwidth, allows higher sample rates on bandwidth-limited links |
+| `"sc12"` | 12-bit packed | Only supported on select devices |
+
+```cpp
+// fc32 host / sc16 wire — typical configuration
+uhd::stream_args_t args("fc32", "sc16");
+args.channels = {0, 1};           // Two-channel MIMO
+args.args["spp"] = "200";         // 200 samples per packet
+
+auto rx_stream = usrp->get_rx_stream(args);
+```
+
+---
+
+## rx_streamer
+
+The `rx_streamer` class provides the host interface for receiving samples.
+
+```cpp
+class rx_streamer {
+public:
+    using sptr = std::shared_ptr<rx_streamer>;
+
+    virtual size_t get_num_channels()   const = 0;
+    virtual size_t get_max_num_samps()  const = 0;
+
+    virtual size_t recv(const buffs_type& buffs,
+                        const size_t      nsamps_per_buff,
+                        rx_metadata_t&    metadata,
+                        const double      timeout    = 0.1,
+                        const bool        one_packet = false) = 0;
+
+    virtual void issue_stream_cmd(const stream_cmd_t& stream_cmd) = 0;
+};
+```
+
+### `recv()`
+
+```cpp
+size_t recv(const buffs_type& buffs,
+            const size_t      nsamps_per_buff,
+            rx_metadata_t&    metadata,
+            const double      timeout    = 0.1,
+            const bool        one_packet = false);
+```
+
+Blocking call to receive samples into the provided buffers. Returns as soon as one of the following occurs: buffers are full, end-of-burst is received, timeout elapses, or an error is detected.
+
+<ParamField path="buffs" type="rx_streamer::buffs_type" required>
+  A `ref_vector<void*>` containing one pointer per channel. Each pointer must address a writable buffer of at least `nsamps_per_buff` samples. For single-channel use: `rx_stream->recv(&buf.front(), ...)`.
+</ParamField>
+
+<ParamField path="nsamps_per_buff" type="size_t" required>
+  Maximum number of samples to write into each channel buffer. Passing `0` is valid for metadata-only retrieval.
+</ParamField>
+
+<ParamField path="metadata" type="rx_metadata_t&" required>
+  Output parameter filled with timing and error information. Always check `metadata.error_code` after the call.
+</ParamField>
+
+<ParamField path="timeout" type="double" default="0.1">
+  Timeout in seconds applied per internal sub-call within `recv()`. The total blocking time may exceed this value for multi-packet operations.
+</ParamField>
+
+<ParamField path="one_packet" type="bool" default="false">
+  When `true`, return immediately after a single packet is processed regardless of buffer size.
+</ParamField>
+
+**Returns:** number of samples actually received, which may be less than `nsamps_per_buff`.
+
+### `issue_stream_cmd()`
+
+```cpp
+void issue_stream_cmd(const stream_cmd_t& stream_cmd);
+```
+
+Sends a streaming command to the device. Must be called to start reception before `recv()` will return data. See [`stream_cmd_t`](#stream_cmd_t) below.
+
+### `get_num_channels()` / `get_max_num_samps()`
+
+```cpp
+size_t get_num_channels() const;  // channels in this streamer
+size_t get_max_num_samps() const; // max samples per recv() call
+```
+
+<Tip>
+Size your receive buffer to `get_max_num_samps()` for maximum efficiency. Calling `recv()` with a larger buffer is valid but will return at most `get_max_num_samps()` per call.
+</Tip>
+
+---
+
+## tx_streamer
+
+The `tx_streamer` class provides the host interface for transmitting samples.
+
+```cpp
+class tx_streamer {
+public:
+    using sptr = std::shared_ptr<tx_streamer>;
+
+    virtual size_t get_num_channels()   const = 0;
+    virtual size_t get_max_num_samps()  const = 0;
+
+    virtual size_t send(const buffs_type&     buffs,
+                        const size_t          nsamps_per_buff,
+                        const tx_metadata_t&  metadata,
+                        const double          timeout = 0.1) = 0;
+
+    virtual bool recv_async_msg(async_metadata_t& async_metadata,
+                                double timeout = 0.1) = 0;
+};
+```
+
+### `send()`
+
+```cpp
+size_t send(const buffs_type&    buffs,
+            const size_t         nsamps_per_buff,
+            const tx_metadata_t& metadata,
+            const double         timeout = 0.1);
+```
+
+Blocking call to transmit samples. Automatically fragments large buffers into multiple packets, respecting burst flags across fragment boundaries.
+
+<ParamField path="buffs" type="tx_streamer::buffs_type" required>
+  A `ref_vector<const void*>` containing one pointer per channel. Each pointer must address a readable buffer of at least `nsamps_per_buff` samples.
+</ParamField>
+
+<ParamField path="nsamps_per_buff" type="size_t" required>
+  Number of samples to transmit from each channel buffer.
+</ParamField>
+
+<ParamField path="metadata" type="const tx_metadata_t&" required>
+  Timing and burst flag information. Set `start_of_burst = true` on the first call and `end_of_burst = true` on the last call of a burst sequence.
+</ParamField>
+
+<ParamField path="timeout" type="double" default="0.1">
+  Timeout in seconds. If the device cannot accept samples within the timeout, fewer samples than requested may be returned.
+</ParamField>
+
+**Returns:** number of samples sent.
+
+### `recv_async_msg()`
+
+```cpp
+bool recv_async_msg(async_metadata_t& async_metadata, double timeout = 0.1);
+```
+
+Receives an asynchronous acknowledgement or error message from the device. Call this in a background thread to detect underflows, sequence errors, and burst acknowledgements.
+
+**Returns:** `true` when a valid message is available; `false` on timeout.
+
+---
+
+## stream_cmd_t
+
+A stream command controls when and how the device delivers samples to the host.
+
+```cpp
+struct stream_cmd_t {
+    enum stream_mode_t : uint32_t {
+        STREAM_MODE_START_CONTINUOUS   = 'a', // stream indefinitely
+        STREAM_MODE_STOP_CONTINUOUS    = 'o', // stop ongoing stream
+        STREAM_MODE_NUM_SAMPS_AND_DONE = 'd', // stream N samples, then stop
+        STREAM_MODE_NUM_SAMPS_AND_MORE = 'm'  // stream N samples, expect another cmd
+    } stream_mode;
+
+    uint64_t   num_samps;   // used with NUM_SAMPS modes
+    bool       stream_now;  // true = start immediately
+    time_spec_t time_spec;  // used when stream_now = false
+};
+```
+
+<ParamField path="stream_mode" type="stream_mode_t" required>
+  One of the four modes above.
+</ParamField>
+
+<ParamField path="num_samps" type="uint64_t">
+  Number of samples to acquire. Only used with `STREAM_MODE_NUM_SAMPS_AND_DONE` and `STREAM_MODE_NUM_SAMPS_AND_MORE`.
+</ParamField>
+
+<ParamField path="stream_now" type="bool">
+  When `true`, start streaming immediately (ASAP). When `false`, start at `time_spec`.
+</ParamField>
+
+<ParamField path="time_spec" type="time_spec_t">
+  Time at which to begin streaming when `stream_now = false`. Must be in the future.
+</ParamField>
+
+```cpp
+// Start continuous streaming immediately
+uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+cmd.stream_now = true;
+rx_stream->issue_stream_cmd(cmd);
+
+// Receive exactly 10000 samples starting at t=2.0 seconds
+uhd::stream_cmd_t timed(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+timed.num_samps  = 10000;
+timed.stream_now = false;
+timed.time_spec  = uhd::time_spec_t(2.0);
+rx_stream->issue_stream_cmd(timed);
+```
+
+---
+
+## rx_metadata_t
+
+Returned by `rx_streamer::recv()` on every call.
+
+```cpp
+struct rx_metadata_t {
+    bool         has_time_spec;
+    time_spec_t  time_spec;
+    bool         more_fragments;
+    size_t       fragment_offset;
+    bool         start_of_burst;
+    bool         end_of_burst;
+    error_code_t error_code;
+    bool         out_of_sequence;
+};
+```
+
+<ResponseField name="has_time_spec" type="bool">
+  `true` when `time_spec` contains the timestamp of the first sample in the buffer.
+</ResponseField>
+
+<ResponseField name="time_spec" type="time_spec_t">
+  Timestamp of the first sample returned. Valid when `has_time_spec` is `true`.
+</ResponseField>
+
+<ResponseField name="more_fragments" type="bool">
+  `true` when the current packet was too large to fit in the buffer. Subsequent `recv()` calls will continue from where this one left off.
+</ResponseField>
+
+<ResponseField name="fragment_offset" type="size_t">
+  Sample count at the start of the buffer relative to the beginning of the fragmented packet.
+</ResponseField>
+
+<ResponseField name="end_of_burst" type="bool">
+  `true` when the last sample in the buffer is the end of a burst.
+</ResponseField>
+
+<ResponseField name="error_code" type="error_code_t">
+  Error status. Check this on every `recv()` call.
+</ResponseField>
+
+<ResponseField name="out_of_sequence" type="bool">
+  When `error_code == ERROR_CODE_OVERFLOW`, this flag distinguishes a hardware overflow (`false`) from a dropped transport packet (`true`).
+</ResponseField>
+
+### RX Error Codes
+
+| Code | Value | Description |
+|---|---|---|
+| `ERROR_CODE_NONE` | `0x0` | No error |
+| `ERROR_CODE_TIMEOUT` | `0x1` | No packet received within the timeout |
+| `ERROR_CODE_LATE_COMMAND` | `0x2` | A stream command was issued in the past |
+| `ERROR_CODE_BROKEN_CHAIN` | `0x4` | An expected follow-on stream command was not received |
+| `ERROR_CODE_OVERFLOW` | `0x8` | Hardware FIFO overflowed or a packet was dropped |
+| `ERROR_CODE_ALIGNMENT` | `0xc` | Multi-channel time alignment failed |
+| `ERROR_CODE_BAD_PACKET` | `0xf` | Received packet could not be parsed |
+
+---
+
+## tx_metadata_t
+
+Passed to `tx_streamer::send()` on every call.
+
+```cpp
+struct tx_metadata_t {
+    bool         has_time_spec;
+    time_spec_t  time_spec;
+    bool         start_of_burst;
+    bool         end_of_burst;
+};
+```
+
+<ParamField path="has_time_spec" type="bool">
+  When `false`, transmit immediately. When `true`, hold samples until `time_spec` is reached.
+</ParamField>
+
+<ParamField path="time_spec" type="time_spec_t">
+  Absolute time at which the first sample should be transmitted. Requires `has_time_spec = true`.
+</ParamField>
+
+<ParamField path="start_of_burst" type="bool">
+  Set `true` on the first `send()` call of a burst sequence.
+</ParamField>
+
+<ParamField path="end_of_burst" type="bool">
+  Set `true` on the last `send()` call of a burst sequence. Causes the device to flush remaining samples and mark end-of-burst in the RF output.
+</ParamField>
+
+---
+
+## async_metadata_t
+
+Returned by `tx_streamer::recv_async_msg()` to report asynchronous TX events.
+
+```cpp
+struct async_metadata_t {
+    size_t       channel;
+    bool         has_time_spec;
+    time_spec_t  time_spec;
+    event_code_t event_code;
+    uint32_t     user_payload[4];
+};
+```
+
+### TX Async Event Codes
+
+| Code | Value | Description |
+|---|---|---|
+| `EVENT_CODE_BURST_ACK` | `0x1` | Burst transmitted successfully |
+| `EVENT_CODE_UNDERFLOW` | `0x2` | TX buffer underflowed between packets |
+| `EVENT_CODE_SEQ_ERROR` | `0x4` | Packet loss between host and device |
+| `EVENT_CODE_TIME_ERROR` | `0x8` | Packet arrived late (time was in the past) |
+| `EVENT_CODE_UNDERFLOW_IN_PACKET` | `0x10` | Underflow occurred mid-packet |
+| `EVENT_CODE_SEQ_ERROR_IN_BURST` | `0x20` | Packet lost within a burst |
+
+```cpp
+// Poll async messages in a separate thread to catch TX errors
+void async_monitor(uhd::tx_streamer::sptr tx_stream) {
+    uhd::async_metadata_t meta;
+    while (tx_stream->recv_async_msg(meta, 0.1)) {
+        if (meta.event_code != uhd::async_metadata_t::EVENT_CODE_BURST_ACK) {
+            std::cerr << "TX async error: " << meta.strevent() << "\n";
+        }
+    }
+}
+```
+
+---
+
+## Full TX Example
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+#include <uhd/stream.hpp>
+#include <complex>
+#include <vector>
+#include <cmath>
+
+int main() {
+    auto usrp = uhd::usrp::multi_usrp::make("type=b200");
+
+    usrp->set_tx_rate(1e6);
+    usrp->set_tx_freq(915e6, 0);
+    usrp->set_tx_gain(60.0, 0);
+
+    uhd::stream_args_t stream_args("fc32", "sc16");
+    stream_args.channels = {0};
+    auto tx_stream = usrp->get_tx_stream(stream_args);
+
+    // Build a tone at 100 kHz
+    const size_t N = 1000;
+    std::vector<std::complex<float>> buf(N);
+    for (size_t i = 0; i < N; ++i) {
+        float phase = 2.0f * M_PI * 100e3f / 1e6f * i;
+        buf[i] = {std::cos(phase), std::sin(phase)};
+    }
+
+    // Send as a single burst
+    uhd::tx_metadata_t md;
+    md.start_of_burst = true;
+    md.end_of_burst   = true;
+    md.has_time_spec  = false;
+
+    tx_stream->send(&buf.front(), N, md, 3.0);
+    return 0;
+}
+```

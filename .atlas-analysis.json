@@ -1,0 +1,172 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "UHD — USRP Hardware Driver",
+  "projectDescription": "UHD is the free and open-source software driver and API for Ettus Research USRP Software Defined Radio (SDR) hardware, supporting C++, C, and Python interfaces for device control, RF streaming, and FPGA integration via RFNoC.",
+  "theme": "aspen",
+  "primaryColor": "#b1b59b",
+  "lightColor": "#2f2b2c",
+  "darkColor": "#1d4708",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/binary-install",
+              "installation/build-from-source",
+              "installation/fpga-images"
+            ]
+          },
+          {
+            "group": "USRP Devices",
+            "pages": [
+              "devices/overview",
+              "devices/b-series",
+              "devices/n-series",
+              "devices/x3xx-series",
+              "devices/x4xx-series",
+              "devices/e-series"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Driver Usage",
+        "groups": [
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "driver/identification",
+              "driver/configuration",
+              "driver/streaming",
+              "driver/synchronization"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "driver/multiple-usrp",
+              "driver/timed-commands",
+              "driver/calibration",
+              "driver/gpio",
+              "driver/transport"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "driver/utilities",
+              "driver/logging"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "C++ API",
+            "pages": [
+              "api/multi-usrp",
+              "api/streaming",
+              "api/rfnoc-graph",
+              "api/types"
+            ]
+          },
+          {
+            "group": "Language Bindings",
+            "pages": [
+              "api/python-api",
+              "api/c-api"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "RFNoC",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "rfnoc/introduction",
+              "rfnoc/software-architecture"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "rfnoc/block-development",
+              "rfnoc/image-builder",
+              "rfnoc/modtool"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Unified C++/C/Python API for all USRP SDR hardware",
+    "RX and TX streaming with timestamping and burst control",
+    "Multi-USRP support for MIMO and synchronized configurations",
+    "RFNoC (RF Network-on-Chip) FPGA processing framework",
+    "Device discovery, identification, and address-based configuration",
+    "Two-stage RF tuning with LO offset and DSP fine-tuning",
+    "IQ calibration utilities for DC offset and IQ balance",
+    "GPIO, timed commands, and hardware synchronization support",
+    "UDP and PCIe transport layers with configurable parameters",
+    "MPM (Module Peripheral Manager) for embedded USRP devices",
+    "FPGA image management and image loader utility",
+    "RFNoC ModTool and Image Builder for custom FPGA block development"
+  ],
+  "publicApiSurface": [
+    "uhd::usrp::multi_usrp::make()",
+    "uhd::usrp::multi_usrp::get_rx_stream()",
+    "uhd::usrp::multi_usrp::get_tx_stream()",
+    "uhd::usrp::multi_usrp::set_rx_freq()",
+    "uhd::usrp::multi_usrp::set_tx_freq()",
+    "uhd::usrp::multi_usrp::set_rx_rate()",
+    "uhd::usrp::multi_usrp::set_tx_rate()",
+    "uhd::usrp::multi_usrp::set_rx_gain()",
+    "uhd::usrp::multi_usrp::set_tx_gain()",
+    "uhd::usrp::multi_usrp::set_clock_source()",
+    "uhd::usrp::multi_usrp::set_time_source()",
+    "uhd::usrp::multi_usrp::set_time_next_pps()",
+    "uhd::rx_streamer::recv()",
+    "uhd::tx_streamer::send()",
+    "uhd::rx_streamer::issue_stream_cmd()",
+    "uhd::rfnoc::rfnoc_graph::make()",
+    "uhd::rfnoc::rfnoc_graph::get_rx_stream()",
+    "uhd::rfnoc::rfnoc_graph::get_tx_stream()",
+    "uhd::rfnoc::rfnoc_graph::connect()",
+    "uhd::device::find()",
+    "uhd::tune_request_t",
+    "uhd::stream_args_t",
+    "uhd::rx_metadata_t",
+    "uhd::tx_metadata_t",
+    "uhd::time_spec_t",
+    "uhd_find_devices (CLI)",
+    "uhd_usrp_probe (CLI)",
+    "uhd_images_downloader (CLI)",
+    "uhd_image_loader (CLI)",
+    "uhd_cal_rx_iq_balance (CLI)",
+    "uhd_cal_tx_dc_offset (CLI)",
+    "uhd_cal_tx_iq_balance (CLI)",
+    "rfnoc_image_builder (CLI)",
+    "rfnoc_modtool (CLI)",
+    "usrpctl (CLI)",
+    "uhd.usrp.MultiUSRP (Python)",
+    "uhd.usrp.StreamArgs (Python)",
+    "uhd.types.RXMetadata (Python)",
+    "uhd.types.TXMetadata (Python)",
+    "uhd.types.StreamCMD (Python)"
+  ]
+}

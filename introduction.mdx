@@ -1,0 +1,89 @@
+---
+title: "USRP Hardware Driver (UHD): Overview & Capabilities"
+sidebarTitle: "Introduction"
+description: "UHD is the open-source USRP Hardware Driver from Ettus Research, with C++, Python, and C APIs on Linux, macOS, and Windows across all USRP device families."
+---
+
+UHD (USRP Hardware Driver) is the free and open-source software driver and API for the Universal Software Radio Peripheral (USRP) platform, created and sold by Ettus Research. It gives developers a unified, hardware-abstracted interface for configuring USRP devices, streaming complex baseband samples, and building complete SDR applications—whether running standalone C++ and Python programs or integrating with third-party frameworks like GNU Radio, MATLAB, or srsRAN.
+
+## What is UHD?
+
+UHD is the official driver layer that sits between your application code and Ettus Research USRP hardware. It handles all low-level concerns—device discovery, link-layer encapsulation, clock and time synchronization, gain and frequency tuning, and high-throughput sample streaming—so that application code only needs to interact with a clean, consistent API.
+
+The driver is organized around a high-level **Multi-USRP** abstraction (`uhd::usrp::multi_usrp`) that works for a single USRP with one or more channels, and equally well for multiple USRPs in a homogeneous configuration. For more advanced use cases—such as directly wiring RFNoC signal-processing blocks together—a lower-level **RFNoC graph API** (`uhd::rfnoc::rfnoc_graph`) is also available.
+
+UHD is primarily developed on Linux and is actively tested on macOS and Windows. The source tree includes the user-space host driver (`host/`), embedded peripheral manager firmware (`mpm/`), FPGA image sources (`fpga/`), and microprocessor firmware (`firmware/`).
+
+## Supported Hardware
+
+UHD supports the full catalog of Ettus Research USRP hardware, including all current and legacy motherboards and their associated daughterboards. This covers:
+
+- **USRP B-Series** – USB-connected, bus-powered devices (B200, B210, B200mini, B205mini)
+- **USRP N-Series** – 1 GbE and 10 GbE networked devices (N200, N210, N300, N310, N320, N321)
+- **USRP X-Series** – High-performance, multi-channel devices (X300, X310, X410, X440)
+- **USRP E-Series** – Embedded, standalone devices (E310, E312, E320)
+- **USRP X4xx / N3xx** – RFNoC-native Generation-3 and Generation-4 platforms
+
+All USRP motherboards and supported daughterboard combinations are covered. Consult the [UHD and USRP Manual](http://files.ettus.com/manual/) for the complete hardware compatibility matrix.
+
+## OS Support
+
+UHD is officially built and tested on the following operating systems:
+
+| Operating System | Notes |
+|---|---|
+| **Linux** | Primary development platform; Fedora and Ubuntu distributions are explicitly tested |
+| **macOS** | Intel-based Macs are supported |
+| **Windows 10** | Fully supported; installers are provided by Ettus Research |
+
+Other POSIX-compatible operating systems will likely work but are not officially supported by Ettus Research.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Multi-USRP API" icon="layer-group">
+    The `uhd::usrp::multi_usrp` class provides a single high-level object that uniformly controls one or many USRP devices. Configure sample rate, center frequency, gain, antenna, bandwidth, clock source, and time reference through a consistent set of get/set methods.
+  </Card>
+  <Card title="High-Throughput Streaming" icon="wave-square">
+    RX and TX streamers (`uhd::rx_streamer`, `uhd::tx_streamer`) deliver complex baseband samples between the host and device with configurable host CPU formats (`fc32`, `fc64`, `sc16`) and over-the-wire formats (`sc16`, `sc8`). Automatic format conversion is handled internally.
+  </Card>
+  <Card title="RFNoC Graph API" icon="diagram-project">
+    Generation-3 and later USRPs expose an RF Network-on-Chip (RFNoC) fabric. The `uhd::rfnoc::rfnoc_graph` API lets you discover, connect, and configure on-device DSP blocks—DDCs, DUCs, FIR filters, FFTs, replay buffers—without touching the host CPU.
+  </Card>
+  <Card title="C, C++, and Python APIs" icon="code">
+    Write applications in C++ using `uhd::usrp::multi_usrp`, call the Python bindings via `uhd.usrp.MultiUSRP`, or integrate from C with the built-in C API wrapper. All three interfaces expose the same device capabilities and are included in every standard UHD build.
+  </Card>
+  <Card title="Clock & Time Synchronization" icon="clock">
+    Select clock and PPS sources (internal, external, GPSDO, MIMO) at runtime. Set absolute time references for deterministic, phase-coherent multi-channel and multi-device operation. Timed command queuing enables sub-microsecond synchronization across devices.
+  </Card>
+  <Card title="Remote Streaming" icon="network-wired">
+    RFNoC devices (X440, X410, X3x0, N3xx, E320) and the legacy N200/N210 support streaming sample data directly to an alternative network destination instead of back to the controlling UHD host, enabling distributed SDR deployments.
+  </Card>
+</CardGroup>
+
+## API Interfaces
+
+UHD exposes three tiers of API to match different application needs:
+
+**C++ (`uhd::usrp::multi_usrp`)** — The primary, full-featured interface. Construct a device object with `multi_usrp::make(args)`, configure all radio parameters, then call `get_rx_stream()` or `get_tx_stream()` to obtain a streamer. All examples in the UHD source tree use this interface.
+
+**Python (`uhd.usrp.MultiUSRP`)** — Auto-generated Python bindings that mirror the C++ API. Ideal for rapid prototyping and integration with NumPy-based signal processing pipelines. The `uhd.usrp.MultiUSRP` constructor accepts the same device address strings as the C++ `make()` call.
+
+**C API** — A stable C-linkage wrapper included by default in all UHD builds. Suitable for embedding UHD in non-C++ projects or when binary ABI stability is required. See the [C API documentation](http://files.ettus.com/manual/page_c_api.html) for the full function reference.
+
+## Third-Party Integrations
+
+UHD-based USRP devices are supported natively by a broad ecosystem of SDR frameworks and commercial toolchains:
+
+- [**GNU Radio**](http://gnuradio.org/) — Flow-graph SDR toolkit with `gr-uhd` source and sink blocks
+- [**MathWorks MATLAB & Simulink**](https://www.mathworks.com/discovery/sdr/usrp.html) — Hardware support package for USRP
+- [**Software Radio Systems srsRAN**](https://www.srsran.com/) — Open-source 4G/5G RAN stack
+- [**NI LabVIEW**](https://www.ni.com/download/ni-usrp-1.3/4711/en/) — LabVIEW instruments and RFNoC FPGA integration
+- [**REDHAWK**](https://redhawksdr.org/) — Government and defense SDR framework
+- [**Osmocom GSM**](https://osmocom.org) and [**OpenBTS**](http://openbts.org) — Open-source cellular infrastructure
+- [**Amarisoft LTE**](https://www.amarisoft.com/) — Commercial LTE/5G NR base-station software
+- [**Eurecom OpenAirInterface**](https://gitlab.eurecom.fr/oai/openairinterface5g) — Open-source 5G research platform
+
+<Note>
+  For complete installation instructions, build guides, and device-specific configuration reference, see the official [UHD and USRP Manual](http://files.ettus.com/manual/). The Ettus Research [Knowledge Base](http://kb.ettus.com) contains additional application notes, tutorials, and the [Technical FAQ](https://kb.ettus.com/Technical_FAQ).
+</Note>

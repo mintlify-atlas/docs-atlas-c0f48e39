@@ -1,0 +1,370 @@
+---
+title: "USRP X4xx Series: RFSoC High-Bandwidth SDR Platform"
+sidebarTitle: "X4xx Series"
+description: "Guide to the USRP X410, X420, and X440 RFSoC-based SDR with Zynq UltraScale+, dual QSFP28 100 GigE, embedded Linux, and up to 2048 Msps sampling."
+---
+
+The USRP X4xx Series is the fourth generation of Ettus Research USRPs. All three variants—X410, X420, and X440—share the same rack-mountable enclosure and motherboard, centered on a Xilinx Zynq UltraScale+ RFSoC (ZU28DR). The RFSoC integrates a quad-core ARM Cortex-A53 processor, a dual-core Cortex-R5F real-time unit, a high-capacity UltraScale+ FPGA, and RF data converters on a single die. Dual QSFP28 ports support up to 100 GigE per port. All variants run embedded Linux and the MPM daemon.
+
+## Supported Variants
+
+<CardGroup cols={3}>
+  <Card title="X410" icon="microchip">
+    **4 full-duplex channels** via two ZBX daughterboards. Up to 400 MHz analog bandwidth per channel. Frequency: 1 MHz – 8 GHz (tunable to 8 GHz). Requires UHD 4.1+.
+  </Card>
+  <Card title="X420" icon="microchip">
+    **2 full-duplex channels** via two HBX daughterboards. Up to 1 GHz analog bandwidth per channel. Frequency: 10 MHz – 20 GHz. External LO support. Requires UHD 4.10+.
+  </Card>
+  <Card title="X440" icon="microchip">
+    **8 full-duplex direct-sampling channels** via two FBX daughterboards. Up to 2048 Msps (1.6 GHz bandwidth). Frequency: 30 MHz – 4 GHz. Requires UHD 4.5+.
+  </Card>
+</CardGroup>
+
+---
+
+## Features
+
+### Hardware Capabilities
+
+- **Processor:** Xilinx Zynq UltraScale+ RFSoC ZU28DR
+  - Quad-core ARM Cortex-A53 at 1200 MHz (APU)
+  - Dual-core ARM Cortex-R5F real-time unit (RPU)
+  - UltraScale+ FPGA programmable logic
+- **Memory:** 4 GiB DDR4 for Processing System; 2×4 GiB DDR4 for Programmable Logic
+- **Connectivity:** Dual QSFP28 ports (10 GigE or 100 GigE per port)
+- **Management:** RJ45 1 GigE (DHCP) for SSH access and slow-rate streaming
+- External PPS input & output
+- External 10 MHz reference input
+- Internal GPSDO (GPS-disciplined OCXO)
+- External GPIO (2× HDMI front-panel connectors)
+- USB-C debug port (JTAG + serial console)
+- USB-C OTG port (USB 2.0)
+- 32 GB eMMC storage (dual-rootfs for Mender remote updates)
+- Closed-loop temperature control; field-replaceable fan tray
+- Rack-mountable (2 USRPs per 1U with rack mount kit)
+
+### Software Capabilities
+
+- Full Linux system on ARM Cortex-A53
+- Runs MPM (Modular Peripheral Manager)
+- RFNoC capable (CHDR bus widths from 64-bit to 512-bit)
+
+### FPGA Capabilities
+
+- Timed commands in FPGA (limited timed frequency tuning)
+- Timed sampling in FPGA
+
+---
+
+## RF Capabilities by Variant
+
+| Variant | Daughterboard | Channels | Max Bandwidth | Frequency Range |
+|---------|---------------|----------|--------------|----------------|
+| X410 | ZBX (×2) | 4 | 400 MHz/ch | 1 MHz – 7.2 GHz (tunable to 8 GHz) |
+| X420 | HBX (×2) | 2 | 1000 MHz/ch | 10 MHz – 20 GHz |
+| X440 | FBX (×2) | 8 | 1600 MHz/ch (2 ch) or 400 MHz (8 ch) | 30 MHz – 4 GHz |
+
+---
+
+## Daughterboards
+
+<Tabs>
+  <Tab title="ZBX (X410)">
+    The **ZBX** is a dual-channel transceiver daughterboard used in the USRP X410.
+
+    - **Channels per board:** 2 (TX/RX)
+    - **Frequency range:** 1 MHz – 8 GHz
+    - **Antenna ports:** TX/RX0 and RX1 per channel
+    - **Relative gain range:** 0 – 60 dB
+    - RX gain reduced below 500 MHz
+
+    The X410 contains two ZBX boards for a total of 4 channels.
+  </Tab>
+  <Tab title="HBX (X420)">
+    The **HBX** is a single-channel transceiver daughterboard used in the USRP X420.
+
+    - **Channels per board:** 1 (TX/RX)
+    - **Frequency range:** 10 MHz – 20 GHz
+    - **Analog bandwidth:** up to 1000 MHz
+    - **Relative gain range:** 0 – 68 dB TX, 0 – 48 dB RX (frequency-dependent)
+    - Supports external LOs and LO sharing between devices
+    - TX/RX LO input/output connectors on the front panel
+
+    The X420 contains two HBX boards for a total of 2 channels.
+  </Tab>
+  <Tab title="FBX (X440)">
+    The **FBX** is a quad-channel direct-sampling transceiver daughterboard used in the USRP X440.
+
+    - **Channels per board:** 4 (TX/RX)
+    - **Frequency range:** 30 MHz – 4 GHz (configurable center frequencies 1 MHz – 4 GHz)
+    - **Maximum sampling rate:** 2048 Msps
+    - **Relative gain range:** 0 dB (no gain control—direct sampling)
+    - No analog mixers or filters; ADC/DAC directly connected to RF connectors via baluns
+
+    The X440 contains two FBX boards for a total of 8 channels.
+  </Tab>
+</Tabs>
+
+---
+
+## Getting Started
+
+### Kit Contents
+
+1. USRP X410 / X420 / X440
+2. Cat 5E Ethernet cable
+3. USB-A to USB-C cable with jack screw
+4. Power supply
+5. Documentation note and safety information
+
+### Minimum UHD Versions
+
+| Variant | Minimum UHD |
+|---------|------------|
+| X410 | 4.1 |
+| X420 | 4.10 |
+| X440 | 4.5 |
+
+### Initial Setup
+
+1. Connect the RJ45 port to a network with DHCP.
+2. Power on the device with the front-panel button.
+3. Discover the device from a host computer:
+
+```bash
+uhd_find_devices
+```
+
+The device reports its type as `x4xx` and its product as `x410`, `x420`, or `x440`.
+
+4. SSH into the device:
+
+```bash
+ssh root@ni-x4xx-<SERIAL>
+```
+
+5. Update the filesystem:
+
+```bash
+# On the device, connected to the internet:
+usrp_update_fs -t master
+```
+
+### Updating the FPGA
+
+Download FPGA images and load a specific flavor:
+
+```bash
+# On the host:
+sudo uhd_images_downloader --args "type=x4xx"
+
+# Load image by flavor
+uhd_image_loader --args "type=x4xx,addr=<IP>,fpga=X4_200"
+```
+
+---
+
+## FPGA Image Flavors
+
+The image flavor encodes both the QSFP28 configuration and the analog bandwidth:
+
+```
+QSFP 0 type ──┐ QSFP 1 type ──┐   Analog Bandwidth ──┐
+              X 4  C  _  2 0 0
+              │ │  │
+   Port type ─┘ │  └── (G = 100G, C = 100G, X = 10G)
+   Lane count ──┘
+```
+
+**Port types:** `X` = 10 GbE, `C` = 100 GbE, `U` = Unused
+
+### X410 Image Flavors
+
+| Flavor | Channels | Bandwidth/ch | QSFP0 | QSFP1 | DDC/DUC | DRAM |
+|--------|----------|-------------|-------|-------|---------|------|
+| X4_200 | 4 | 200 MHz | 4×10 GbE | Unused | Yes | Yes (4 GiB) |
+| UC_200 | 4 | 200 MHz | Unused | 100 GbE | Yes | Yes (4 GiB) |
+| CG_400 | 4 | 400 MHz | 100 GbE | 100 GbE | No | No |
+
+### X420 Image Flavors
+
+| Flavor | Channels | Bandwidth/ch | QSFP0 | QSFP1 | DDC/DUC | DRAM |
+|--------|----------|-------------|-------|-------|---------|------|
+| X4_200 | 2 | 200 MHz | 4×10 GbE | Unused | Yes | Yes (8 GiB) |
+| X4_1000 | 2 | 1000 MHz | 4×10 GbE | Unused | No | Yes (8 GiB) |
+| CG_1000 | 2 | 1000 MHz | 100 GbE | 100 GbE | No | Yes (8 GiB) |
+
+### X440 Image Flavors
+
+| Flavor | Channels | Bandwidth/ch | QSFP0 | QSFP1 | DDC/DUC | DRAM |
+|--------|----------|-------------|-------|-------|---------|------|
+| X4_200 | 8 | 200 MHz | 4×10 GbE | Unused | Yes | No |
+| X4_400 | 8 | 400 MHz | 4×10 GbE | Unused | No | Yes (8 GiB) |
+| CG_400 | 8 | 400 MHz | 100 GbE | 100 GbE | No | No |
+| X4_1600 | 2 | 1600 MHz | 4×10 GbE | Unused | No | Yes (8 GiB) |
+| CG_1600 | 2 | 1600 MHz | 100 GbE | 100 GbE | No | No |
+
+<Tip>
+Use `X4_200` or `UC_200` (X410/X420) for applications requiring ≤ 200 MHz bandwidth with the RFNoC DDC/DUC. Use `CG_xxx` images for the highest continuous streaming bandwidth to/from an external host over 100 GigE.
+</Tip>
+
+---
+
+## Master Clock Rates
+
+The available master clock rates depend on the loaded FPGA image flavor.
+
+### X410
+
+| Image | Available MCRs |
+|-------|---------------|
+| 200 MHz images | 245.76 MHz, 250 MHz |
+| 400 MHz images | 491.52 MHz, 500 MHz |
+
+### X420
+
+| MCR | Converter Rate | RFDC Divider | Available In |
+|-----|---------------|--------------|-------------|
+| 245.76 MHz | 1966.08 MHz | 8 | X4_200, xx_1000 |
+| 250 MHz | 2000 MHz | 8 | X4_200, xx_1000 |
+| 491.52 MHz | 3932.16 MHz | 8 | xx_1000 |
+| 1250 MHz (default) | 2500 MHz | 2 | xx_1000 |
+
+### X440
+
+The X440 supports a broad range of master clock rates from 125 Msps to 2048 Msps. Selected values:
+
+| MCR | Converter Rate | Digital Bandwidth |
+|-----|---------------|------------------|
+| 125 MHz | 1.0 GHz | 100 MHz |
+| 307.2 MHz | 2.4576 GHz | 245.76 MHz |
+| 368.64 MHz | 2.94912 GHz | 295 MHz |
+| 500 MHz | 4.0 GHz | 400 MHz |
+| 1000 MHz | 4.0 GHz | 800 MHz |
+| 2000 MHz | 4.0 GHz | 1600 MHz |
+
+---
+
+## Network Interfaces
+
+| Interface | Description | Default |
+|-----------|-------------|---------|
+| `eth0` | RJ45 management port | DHCP |
+| `sfp0` | QSFP28 port 0, lane 0 | 192.168.10.2/24 |
+| `sfp0_1` – `sfp0_3` | QSFP28 port 0, lanes 1–3 | 192.168.11–13.2/24 |
+| `sfp1` | QSFP28 port 1, lane 0 | 192.168.20.2/24 |
+| `int0` | Internal FPGA↔ARM interface | 169.254.0.1/24 |
+
+Network configuration files are stored at `/data/network/<interface>.network`.
+
+---
+
+## Using the X4xx from UHD
+
+```cpp
+// Connect to any X4xx device
+auto usrp = uhd::usrp::multi_usrp::make("type=x4xx");
+
+// Connect by IP with specific master clock rate
+auto usrp = uhd::usrp::multi_usrp::make(
+    "type=x4xx,addr=192.168.10.2,master_clock_rate=250e6");
+```
+
+### Subdev Specifications
+
+**X410:**
+
+| Label | Subdev Spec |
+|-------|-------------|
+| DB 0 / RF 0 | A:0 |
+| DB 0 / RF 1 | A:1 |
+| DB 1 / RF 0 | B:0 |
+| DB 1 / RF 1 | B:1 |
+
+**X420:**
+
+| Label | Subdev Spec |
+|-------|-------------|
+| DB 0 / RF 0 | A:0 |
+| DB 1 / RF 0 | B:0 |
+
+**X440 (xx_400 images):**
+
+| Label | Subdev Spec |
+|-------|-------------|
+| DB 0 / RF 0–3 | A:0 – A:3 |
+| DB 1 / RF 0–3 | B:0 – B:3 |
+
+---
+
+## Device Arguments
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `addr` | IPv4 address | `addr=192.168.10.2` |
+| `mgmt_addr` | RPC connection address | `mgmt_addr=ni-x4xx-SERIAL` |
+| `master_clock_rate` | Master clock rate in Hz | `master_clock_rate=250e6` |
+| `time_source` | PPS source | `time_source=gpsdo` |
+| `clock_source` | Reference clock source | `clock_source=external` |
+| `ext_clock_freq` | External reference clock frequency | `ext_clock_freq=10e6` |
+| `converter_rate` | ADC/DAC converter rate (X440 only) | `converter_rate=4e9` |
+| `force_reinit` | Force clocking reinitialization | `force_reinit=1` |
+| `skip_adc_selfcal` | Skip ADC self-calibration | `skip_adc_selfcal=true` |
+| `force_mtu` | Manually set network MTU | `force_mtu=8000` |
+
+---
+
+## Clock and Synchronization
+
+The X4xx uses a GPS-disciplined OCXO as its internal reference. Supported clock and time source combinations:
+
+| `clock_source` | `time_source` | Notes |
+|----------------|---------------|-------|
+| `internal` | `internal` | Free-running internal oscillator |
+| `gpsdo` | `gpsdo` | GPS-disciplined; recommended for precision |
+| `external` | `external` | External 10 MHz + 1 PPS |
+| `nsync` | — | eCPRI network-derived clock (advanced) |
+
+```cpp
+// Use GPS for both clock and time reference
+usrp->set_sync_source(device_addr_t("clock_source=gpsdo,time_source=gpsdo"));
+```
+
+---
+
+## X440 Dual-Rate Operation
+
+The X440 can operate two daughterboards at different master clock rates simultaneously, enabling full L-band spectrum capture:
+
+```cpp
+// Dual rate: 1024 MHz and 1280 MHz
+auto graph = uhd::rfnoc::rfnoc_graph::make(
+    "type=x4xx,master_clock_rate=1024e6;1280e6");
+```
+
+<Note>
+When using dual rate on the X440, multi-tile synchronization (MTS) is disabled. Phase relationship between channels on different daughterboards is undefined in this mode.
+</Note>
+
+---
+
+## Care and Handling
+
+<Warning>
+Input power limits by variant:
+
+- **X410:** Never exceed +14 dBm continuous (≤3 GHz) or +17 dBm continuous (>3 GHz) into any RF input. Maximum +20 dBm for less than 5 minutes above 3 GHz.
+- **X420:** Never exceed 0 dBm into any RF input.
+- **X440:** Never exceed +13 dBm (≤2.5 GHz), +17 dBm (2.5–3.6 GHz), or +20 dBm (3.6–4 GHz) continuous.
+- **X410:** Always use at least 30 dB attenuation in loopback configuration.
+</Warning>
+
+---
+
+## Additional Resources
+
+- [MPM Architecture](/driver/utilities)
+- [RFNoC Overview](/rfnoc/introduction)
+- [Transport Configuration](/driver/transport)
+- [X410/X440 Getting Started Guide](https://kb.ettus.com/USRP_X410/X440_Getting_Started_Guide)
+- [X440 Sampling Rates and MCR](https://kb.ettus.com/About_Sampling_Rates_and_Master_Clock_Rates_for_the_USRP_X440)

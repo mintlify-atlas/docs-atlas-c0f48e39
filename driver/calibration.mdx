@@ -1,0 +1,195 @@
+---
+title: "USRP RF Self-Calibration and IQ Imbalance Correction"
+sidebarTitle: "Calibration"
+description: "Run self-calibration utilities to minimize IQ imbalance and DC offset, and understand how UHD applies stored correction tables at runtime."
+---
+
+Direct-conversion radio frontends inevitably suffer from two analog impairments: **IQ imbalance** (the I and Q paths differ slightly in amplitude and are not exactly 90° apart) and **DC offset** (LO leakage creates a fixed bias on the baseband signal). UHD ships self-calibration utilities that sweep the LO across a frequency range, measure these impairments using transmit leakage into the receive path, and write correction tables to disk. At runtime UHD reads the table and programs correction hardware in the FPGA automatically whenever you retune the LO—no external test equipment required.
+
+## Supported RF Frontends
+
+The primary self-calibration utilities (`uhd_cal_rx_iq_balance`, `uhd_cal_tx_dc_offset`, `uhd_cal_tx_iq_balance`) support the following daughterboards and integrated frontends:
+
+- RFX Series transceiver boards
+- WBX Series transceiver boards
+- SBX Series transceiver boards
+- CBX Series transceiver boards
+- UBX Series transceiver boards
+- OBX Series transceiver boards
+- USRP N320
+
+<Note>
+USRP E310, E320, N300, N310, and B200-Series devices use a dedicated RFIC that performs its own internal calibration. Those devices are not covered by the utilities described here.
+</Note>
+
+The **USRP X420** (1 GHz bandwidth) requires a separate utility: `uhd_iq_dc_correction.py`. See the [X420 section](#x420-iq-and-dc-correction) below.
+
+## Running the Self-Calibration Utilities
+
+<Steps>
+  <Step title="Disconnect all antennas">
+    Remove any external signals or cables from the RF antenna ports. The utilities use TX-to-RX leakage as the measurement source; external signals corrupt the measurement.
+  </Step>
+  <Step title="Check for a daughterboard serial number">
+    Calibration data is keyed to the board's serial number. If your daughterboard is older and lacks one, burn a serial number first:
+
+    ```bash
+    <install-dir>/lib/uhd/utils/usrp_burn_db_eeprom \
+        --ser=<desired-serial> \
+        --args=<optional-device-args>
+    ```
+  </Step>
+  <Step title="Run the calibration sweep">
+    Each utility performs a full frequency sweep and writes a `.cal` file. Allow several minutes per utility:
+
+    ```bash
+    uhd_cal_rx_iq_balance --verbose --args=<optional device args>
+    uhd_cal_tx_iq_balance --verbose --args=<optional device args>
+    uhd_cal_tx_dc_offset  --verbose --args=<optional device args>
+    ```
+
+    Use `--help` to see advanced options such as manually specifying the frequency range and step size.
+  </Step>
+  <Step title="Verify correction is applied">
+    Retune the LO. UHD will automatically load corrections from the `.cal` file and apply them in the FPGA. No additional API calls are needed unless you want to override the values.
+  </Step>
+</Steps>
+
+<Warning>
+When a calibration table is present and you manually set a correction value via the API, you must re-apply that value every time the LO is retuned, because UHD will overwrite it with the table value on each retune.
+</Warning>
+
+## Calibration Data Storage
+
+Calibration files are binary files with a `.cal` extension stored in the user's home directory:
+
+<Tabs>
+  <Tab title="Linux">
+    ```
+    ${HOME}/.local/share/uhd/cal/
+    ```
+    Override with the `$UHD_CAL_DATA_PATH` environment variable.
+  </Tab>
+  <Tab title="Windows">
+    ```
+    %LOCALAPPDATA%\uhd\cal\
+    ```
+    Override with the `$UHD_CAL_DATA_PATH` environment variable.
+  </Tab>
+</Tabs>
+
+- Re-running a calibration utility **replaces** the existing file. The old file is renamed so it can be recovered.
+- Files can be copied between machines by transferring the `cal/` directory.
+- The format is [FlatBuffers](https://google.github.io/flatbuffers/)-based binary. Schema files are installed to `<install-path>/share/uhd/cal/`.
+
+### Inspecting and Modifying Calibration Data
+
+Convert a `.cal` file to editable JSON using the `flatc` tool:
+
+```bash
+# Convert binary .cal to JSON
+flatc --strict-json -t <install-dir>/share/uhd/cal/<foo>_cal.fbs -- <data>.cal
+
+# Edit <data>.json, then convert back to binary
+flatc -b <install-dir>/include/uhd/cal/<foo>_cal.fbs <data>.json
+```
+
+Replace `<foo>_cal.fbs` with the appropriate schema, for example `pwr_cal.fbs` for power calibration data.
+
+### Migrating UHD 3.x CSV Data
+
+Older UHD versions stored calibration data as CSV files. Convert them to the current binary format with:
+
+```bash
+convert_cal_data.py          # converts all found CSV files
+convert_cal_data.py --help   # see options
+```
+
+The tool is typically installed to `/usr/share/lib/uhd/utils/` or equivalent.
+
+## Ignoring Calibration Files at Runtime
+
+You can bypass stored calibration data by passing `ignore-cal-file=1` in the device arguments:
+
+<CodeGroup>
+```cpp C++ API
+auto usrp = uhd::usrp::multi_usrp::make("type=x300,ignore-cal-file=1");
+```
+
+```bash Command line
+tx_waveforms --args="addr=192.168.10.2,ignore-cal-file=1" \
+             --freq=100e6 --rate=1e6
+```
+</CodeGroup>
+
+## Programmatic Correction API
+
+When you want to set correction values manually—rather than relying on the stored table—use these API calls:
+
+<Tabs>
+  <Tab title="DC Offset Correction">
+    ```cpp
+    // Set a fixed DC offset correction (complex value)
+    usrp->set_tx_dc_offset(std::complex<double>(0.01, -0.02), chan);
+    usrp->set_rx_dc_offset(std::complex<double>(-0.005, 0.01), chan);
+
+    // Enable automatic (IIR notch-filter) RX DC correction
+    usrp->set_rx_dc_offset(true, chan);
+    ```
+
+    <Note>
+    Automatic RX DC offset correction is implemented as a single-tap IIR notch filter with a default coefficient of 2⁻²⁰. It removes any constant DC component, but will also attenuate signals very close to DC if the LO is inside your band of interest. Use offset tuning to keep the LO out of band when possible.
+    </Note>
+  </Tab>
+  <Tab title="IQ Balance Correction">
+    ```cpp
+    // A is the magnitude correction, B is the phase correction
+    // Combined as std::complex<double>(A, B) for API symmetry
+    usrp->set_rx_iq_balance(std::complex<double>(A, B), chan);
+    usrp->set_tx_iq_balance(std::complex<double>(A, B), chan);
+    ```
+
+    The FPGA applies the correction matrix:
+    ```
+    [ I' ]   [ A/64 + 1    0 ] [ I ]
+    [ Q' ] = [ B/64        1 ] [ Q ]
+    ```
+  </Tab>
+</Tabs>
+
+## X420 IQ and DC Correction
+
+The USRP X420 (1 GHz bandwidth) uses a different correction path and requires the dedicated Python utility `uhd_iq_dc_correction.py`, installed to `<Python path>/site-packages/uhd/utils/`.
+
+**Requirements:** `scipy` and `tqdm` Python packages in addition to the standard UHD Python bindings.
+
+```bash
+# RX IQ imbalance + DC offset only (default)
+python3 uhd_iq_dc_correction.py --args=<device-args> -c <channel>
+
+# Also include TX corrections
+python3 uhd_iq_dc_correction.py --args=<device-args> -c <channel> --tx
+
+# Lower-speed 1 GbE connection
+python3 uhd_iq_dc_correction.py --args=<device-args> -c <channel> --rj45
+
+# Override master clock rate
+python3 uhd_iq_dc_correction.py --args=<device-args> -c <channel> \
+    --sample_rate=<rate>
+```
+
+<Tip>
+Use a 10 GbE or 100 GbE connection when running `uhd_iq_dc_correction.py` to minimize sweep time. The `--rj45` flag is required when using the 1 GbE (RJ45) port, as it disables optimizations that assume a higher-speed link.
+</Tip>
+
+Once the utility has run, correction values are stored in the calibration directory and applied automatically at runtime. Manual override via `set_rx_dc_offset()` / `set_rx_iq_balance()` is **not** supported for X420.
+
+## ADC Self-Calibration (X3x0)
+
+X300 and X310 devices include an ADC self-calibration utility that optimizes the ADC capture clock delay:
+
+```bash
+uhd_adc_self_cal --args="addr=192.168.10.2"
+```
+
+Run this utility after the device has reached its operating temperature. The calibration result is stored in the device's onboard flash and survives power cycles.

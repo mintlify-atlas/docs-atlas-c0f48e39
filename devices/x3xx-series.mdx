@@ -1,0 +1,303 @@
+---
+title: "USRP X3xx Series: High-Performance SDR with Kintex-7"
+sidebarTitle: "X3xx Series"
+description: "Guide to the USRP X300 and X310 with Kintex-7 FPGA, dual SFP+ Ethernet, PCIe over MXI, and interchangeable RF daughterboard slots A and B."
+---
+
+The USRP X3xx Series consists of the X300 and X310—high-performance software defined radios built around a Xilinx Kintex-7 FPGA. They feature two interchangeable RF daughterboard slots, dual SFP+ ports for 1 GigE or 10 GigE connectivity, and an optional PCIe (MXI) interface for near-zero latency host connections. With up to 160 MHz of RF bandwidth at 16-bit samples and supported master clock rates of 200 MHz and 184.32 MHz, the X3xx Series is the foundation for demanding lab, field, and production deployments.
+
+## Supported Models
+
+<CardGroup cols={2}>
+  <Card title="X300" icon="server">
+    Xilinx Kintex-7 XC7K325T FPGA. Two daughterboard slots (A and B). Dual SFP+ + optional PCIe.
+  </Card>
+  <Card title="X310" icon="server">
+    Xilinx Kintex-7 XC7K410T FPGA (larger). Two daughterboard slots (A and B). Dual SFP+ + optional PCIe. Higher FPGA resource budget for larger RFNoC designs.
+  </Card>
+</CardGroup>
+
+---
+
+## Features
+
+### Hardware Capabilities
+
+- **2 transceiver card slots** — 2×2 MIMO out of the box
+- **Dual SFP+ Transceivers** — 1 GigE or 10 GigE
+- **PCIe over cable (MXI)** — Gen1 ×4 via NI PCIe-8371 or ExpressCard-8360B
+- External PPS input & output
+- External reference input & output: 10 MHz, 11.52 MHz, 23.04 MHz, or 30.72 MHz
+- **Supported master clock rates:** 200 MHz (default) and 184.32 MHz
+- Variable daughterboard clock rates
+- External GPIO connector (front panel) with UHD API control
+- On-board USB JTAG programmer
+- Internal GPSDO option
+
+### FPGA Capabilities
+
+- 2 RX DDC chains and 2 TX DUC chains
+- Timed commands in FPGA
+- Timed sampling in FPGA
+- Up to 160 MHz of RF bandwidth with 16-bit samples
+- RFNoC capable
+
+---
+
+## Getting Started
+
+### Assembling the X300/X310
+
+1. Remove the two Phillips screws from the top cover.
+2. Insert the daughterboards into slots A and B; optionally screw them to the motherboard.
+3. Connect RF cables from the daughterboard connectors to the labeled front-panel SMA ports.
+4. If installing an internal GPSDO, follow the GPSDO installation guide and connect an external GPS antenna to the rear GPS ANT connector.
+5. Insert a 1 GigE SFP+ transceiver into Ethernet Port 0 and connect the X3xx to your host.
+6. Connect the power supply and power on the device.
+
+### Network Connectivity
+
+An unconfigured X3xx defaults to **192.168.10.2** on 1 GigE. Set your host interface to `192.168.10.1` and verify:
+
+```bash
+ping 192.168.10.2
+uhd_find_devices
+uhd_usrp_probe --args addr=192.168.10.2
+```
+
+If `uhd_usrp_probe` reports FPGA version warnings, update the FPGA image before proceeding.
+
+### Updating the FPGA
+
+```bash
+# Download latest images
+uhd_images_downloader
+
+# Flash via Ethernet (auto-detect image type)
+uhd_image_loader --args="type=x300,addr=192.168.10.2"
+
+# Flash a specific flavor
+uhd_image_loader --args="type=x300,addr=192.168.10.2,fpga=HG"
+```
+
+---
+
+## Connection Methods
+
+<Tabs>
+  <Tab title="1 GigE">
+    Insert a 1 Gigabit SFP transceiver into **Ethernet Port 0**. Connect to your host with a standard Ethernet cable.
+
+    Default device IP address: **192.168.10.2**
+
+    Set the host interface to a static address in the same subnet (e.g., `192.168.10.1`).
+
+    ```cpp
+    auto usrp = uhd::usrp::multi_usrp::make("type=x300,addr=192.168.10.2");
+    ```
+  </Tab>
+  <Tab title="10 GigE">
+    Insert a 10 Gigabit SFP+ cable into **Ethernet Port 1** (for dual 10 GigE, also Port 0 with XG image). Ettus Research recommends the Intel X520-DA2 NIC.
+
+    Default device IP addresses:
+
+    | Port | FPGA Image | Default IP | Host Static IP |
+    |------|------------|-----------|----------------|
+    | Port 0 | XG | 192.168.30.2 | 192.168.30.1 |
+    | Port 1 | HG or XG | 192.168.40.2 | 192.168.40.1 |
+
+    For dual 10 GigE streaming at 200 Msps per channel, use the `second_addr` argument:
+
+    ```bash
+    benchmark_rate --args="type=x300,addr=192.168.30.2,second_addr=192.168.40.2" \
+                   --channels="0,1" --rx_rate 200e6
+    ```
+  </Tab>
+  <Tab title="PCIe (MXI)">
+    Connect the X3xx to the host via a MXI-Express cable to an NI PCIe-8371 (desktop) or ExpressCard-8360B (laptop).
+
+    Install the NI RIO kernel driver before use. On Linux, start the service manager:
+
+    ```bash
+    sudo niusrprio_pcie start
+    ```
+
+    Address by NI-RIO resource name:
+
+    ```cpp
+    auto usrp = uhd::usrp::multi_usrp::make("resource=RIO0");
+    ```
+
+    <Warning>
+    The X3xx is **not hot-pluggable** over PCIe. Power off the host before connecting or disconnecting the MXI cable. Changes are only detected after a reboot.
+    </Warning>
+  </Tab>
+</Tabs>
+
+---
+
+## FPGA Image Flavors
+
+The X3xx ships two SFP+ ports; the FPGA image determines their behavior:
+
+| Flavor | SFP+ Port 0 | SFP+ Port 1 |
+|--------|-------------|-------------|
+| HG (default) | 1 GigE | 10 GigE |
+| XG | 10 GigE | 10 GigE |
+| HA | 1 GigE | Aurora |
+| XA | 10 GigE | Aurora |
+
+FPGA images are distributed in two formats:
+- **LVBITX** — for use over PCIe and Ethernet
+- **BIT** — for use over Ethernet and JTAG
+
+---
+
+## Master Clock Rate
+
+The X3xx generates a single master clock rate per motherboard. Supported values:
+
+- **200 MHz** (default; required for TwinRX daughterboard)
+- **184.32 MHz**
+
+Set the clock rate at initialization using the device argument:
+
+```cpp
+// 184.32 MHz master clock rate
+auto usrp = uhd::usrp::multi_usrp::make("type=x300,master_clock_rate=184.32e6");
+usrp->set_rx_rate(30e6); // coerced to 30.72e6 (= 184.32e6 / 6)
+std::cout << usrp->get_rx_rate() << std::endl; // Prints 30720000
+```
+
+<Note>
+The X3xx does **not** support changing the master clock rate after initialization via `set_master_clock_rate()`. To switch rates, destroy the USRP object and recreate it with the new `master_clock_rate` argument.
+</Note>
+
+---
+
+## Supported Daughterboards
+
+The X3xx accepts all standard USRP daughterboards in its two slots (A and B). Popular choices include:
+
+| Daughterboard | Frequency Range | Bandwidth | Notes |
+|--------------|----------------|-----------|-------|
+| **WBX** | 50 MHz – 2.2 GHz | 40 MHz (WBX) / 120 MHz (WBX-120) | Full-duplex |
+| **SBX** | 400 MHz – 4.4 GHz | 40 MHz / 120 MHz | Full-duplex |
+| **CBX** | 1.2 GHz – 6 GHz | 40 MHz / 120 MHz | Full-duplex |
+| **UBX** | 10 MHz – 6 GHz | 40 MHz / 160 MHz | Full-duplex; requires dboard clock ≤ 20 MHz below 1 GHz |
+| **OBX** | 10 MHz – 8.4 GHz | 160 MHz | Full-duplex |
+| **TwinRX** | 10 MHz – 6 GHz | — | 2-channel RX only; requires 200 MHz MCR |
+| **BasicRX / LFRX** | — | 250 MHz / 66 MHz | No tuning elements |
+| **DBSRX2** | 800 MHz – 2.3 GHz | 8–80 MHz | Set dboard clock to 100 MHz |
+| **TVRX2** | 50 MHz – 860 MHz | Up to 10 MHz | Set dboard clock to 100 MHz |
+
+<Tip>
+When using daughterboards at frequencies below 1 GHz with the UBX, reduce the daughterboard clock to 20 MHz for optimal phase synchronization and RF performance: `dboard_clock_rate=20e6`.
+</Tip>
+
+---
+
+## Synchronization with OctoClock
+
+To synchronize multiple X3xx devices, connect an OctoClock (CDA-2990) to distribute a shared 10 MHz reference and 1 PPS signal:
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make(
+    "type=x300,addr=192.168.10.2,clock_source=external,time_source=external");
+```
+
+The external reference clock input accepts 10 MHz, 11.52 MHz, 23.04 MHz, or 30.72 MHz. If using a non-10 MHz reference, provide the `system_ref_rate` argument:
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make(
+    "type=x300,addr=192.168.10.2,system_ref_rate=30.72e6,clock_source=external");
+```
+
+---
+
+## Device Arguments
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `addr` | IPv4 address of primary SFP+ port | `addr=192.168.10.2` |
+| `second_addr` | IPv4 address of secondary SFP+ port | `second_addr=192.168.40.2` |
+| `resource` | NI-RIO resource name (PCIe) | `resource=RIO0` |
+| `master_clock_rate` | Master clock rate in Hz | `master_clock_rate=184.32e6` |
+| `dboard_clock_rate` | Daughterboard reference clock in Hz | `dboard_clock_rate=20e6` |
+| `system_ref_rate` | External reference clock frequency | `system_ref_rate=30.72e6` |
+| `time_source` | PPS source | `time_source=external` |
+| `clock_source` | Reference clock source | `clock_source=external` |
+| `fpga` | Select FPGA image flavor (PCIe only) | `fpga=HG` |
+| `force_mtu` | Manually set network MTU | `force_mtu=8000` |
+
+---
+
+## Using the X3xx from UHD
+
+```cpp
+// Single device via 1 GigE
+auto usrp = uhd::usrp::multi_usrp::make("type=x300,addr=192.168.10.2");
+
+// Two channels, TwinRX on slot A
+usrp->set_rx_subdev_spec("A:RX1 A:RX2");
+
+// Multiple RX channels with different antennas
+usrp->set_rx_subdev_spec("A:RX1 A:RX2");
+usrp->set_rx_rate(10e6, uhd::usrp::multi_usrp::ALL_CHANS);
+```
+
+---
+
+## Front Panel Reference
+
+Key front-panel indicators:
+
+| Indicator | Meaning |
+|-----------|---------|
+| JTAG USB | On-board USB-JTAG programmer port |
+| TX/RX LED (RF A) | Data streaming on TX/RX channel, daughterboard A |
+| RX2 LED (RF A) | Data streaming on RX2 channel, daughterboard A |
+| REF LED | External reference clock locked |
+| PPS LED | Pulses once per second on valid PPS signal |
+| GPS LED | GPS reference locked (GPSDO option) |
+| LINK LED | Host computer communicating with device |
+
+---
+
+## Troubleshooting
+
+### "No Control Response" Error
+
+This error typically means the host IP address is on a different subnet than the USRP. Verify that your host interface is set to the correct static IP (e.g., `192.168.10.1` for 1 GigE Port 0).
+
+### Firewall Blocking Discovery
+
+Device discovery uses UDP broadcast. If `uhd_find_devices` returns nothing, allow UDP source port **49152** through your firewall, or specify the device IP address directly.
+
+### PCIe Not Enumerating (Linux)
+
+Start the NI device manager service:
+
+```bash
+sudo niusrprio_pcie start
+lspci -k -d 1093:c4c4  # Verify device is detected
+```
+
+### Corrupt EEPROM Recovery
+
+```bash
+usrp_burn_mb_eeprom --args="type=x300,recover_mb_eeprom,disable_adc_self_test" \
+                    --values="revision=<NUM>"
+```
+
+Power-cycle the device after running this command.
+
+---
+
+## Additional Resources
+
+- [GPIO Configuration](/driver/gpio)
+- [Device Configuration Guide](/driver/configuration)
+- [RF Calibration Guide](/driver/calibration)
+- [Device Synchronization](/driver/synchronization)
+- [Ettus Research KB: X300/X310](https://kb.ettus.com/X300/X310)

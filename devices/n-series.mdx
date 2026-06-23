@@ -1,0 +1,303 @@
+---
+title: "USRP N3xx Series: Networked SDR with Embedded Linux"
+sidebarTitle: "N Series"
+description: "Guide to the USRP N300, N310, N320, and N321 network-connected SDR platform with dual SFP+, embedded ARM Linux, MPM, and GPSDO support."
+---
+
+The USRP N3xx Series is a network-connected software defined radio platform built around a Xilinx Zynq SoC—combining a dual-core ARM Cortex-A9 processor with a Kintex-7 FPGA on a single die. Devices in this family run a full OpenEmbedded Linux distribution, communicate with UHD over 1 GigE or 10 GigE SFP+ links, and are managed through the Modular Peripheral Manager (MPM) daemon. They ship with daughterboards pre-installed and support an internal GPSDO for precision timing.
+
+## Supported Models
+
+<CardGroup cols={2}>
+  <Card title="N300" icon="server">
+    2-channel transceiver (single Magnesium daughterboard). Based on Xilinx XC7Z035 FPGA. No external LO connectors.
+  </Card>
+  <Card title="N310" icon="server">
+    4-channel transceiver (two Magnesium daughterboards, AD9371 RFIC). Xilinx XC7Z100 FPGA. External LO inputs for all four channels.
+  </Card>
+  <Card title="N320" icon="server">
+    2-channel transceiver using discrete ADC/DAC components. Higher maximum analog bandwidth (up to 250 Msps / 200 MHz). Adds QSFP+ connector. Front-panel GPIO.
+  </Card>
+  <Card title="N321" icon="server">
+    Like N320 but with LO sharing/export capability—up to 32×32 channels with a single shared LO. No front-panel GPIO.
+  </Card>
+</CardGroup>
+
+---
+
+## Features
+
+### N310 / N300 (Magnesium)
+
+- **Supported master clock rates:** 122.88 MHz, 125 MHz, 153.6 MHz
+- **Tuning range:** 10 MHz – 6 GHz (tunable to 1 MHz; performance not guaranteed below 300 MHz)
+- 4 RX DDC chains (2 for N300) and 4 TX DUC chains (2 for N300)
+- Support for external LOs (N310 only)
+- 2 SFP+ connectors
+
+### N320 / N321 (Rhodium)
+
+- **Supported master clock rates:** 200 MHz, 245.76 MHz, 250 MHz
+- **Tuning range:** 3 MHz – 6 GHz (tunable to 1 MHz; performance not guaranteed below 450 MHz)
+- 2 RX DDC chains and 2 TX DUC chains
+- Support for external LOs
+- LO export/sharing (N321 only, up to four outputs)
+- 2 SFP+ connectors + 1 QSFP+ connector (for high-bandwidth streaming with DPDK)
+
+### Common Hardware
+
+- Dual SFP+ Transceivers (1 GigE, 10 GigE, or Aurora)
+- External PPS input & output
+- External 10 MHz input & output (20 MHz and 25 MHz also supported)
+- External White Rabbit time/frequency reference input
+- Internal 25 MHz reference clock
+- Internal GPSDO for timing and location
+- External GPIO connector (DB15, 12 pins) with UHD API control
+- USB connection for built-in JTAG debugger and serial console
+- Micro SD card storage (partitioned for dual-rootfs remote updates via Mender)
+
+### Software
+
+- Full Linux system on ARM Cortex-A9
+- Runs MPM (Modular Peripheral Manager)
+- RFNoC capable
+
+---
+
+## Getting Started
+
+### Checklist
+
+1. Connect AC power
+2. Connect the RJ45 management port to your network (or a direct host connection)
+3. Review security settings (no root password is set by default)
+4. Connect external clocking references if required
+5. Connect external LOs if required (N310/N320/N321)
+
+### Updating the File System
+
+Before first use, update the filesystem to match your installed UHD version. Download the SD card image with:
+
+```bash
+uhd_images_downloader -t n3xx_common_sdimg_default
+```
+
+The image is saved to `<UHD_INSTALL_DIR>/share/uhd/images/usrp_n3xx_fs.sdimg`.
+
+**On Linux** (write directly to the SD card):
+```bash
+sudo dd if=usrp_n3xx_fs.sdimg of=/dev/<YOUR_SD_CARD> bs=1M
+```
+
+**On Windows**, use [Etcher](https://etcher.balena.io/) to flash the `.sdimg` file to the micro SD card.
+
+### SSH Connection
+
+The RJ45 port (`eth0`) is configured for DHCP by default. Once it obtains an address:
+
+```bash
+ssh root@ni-n3xx-<SERIAL>
+# Or using mDNS:
+ssh root@ni-n3xx-<SERIAL>.local
+```
+
+<Note>
+The device ships with no root password set. Run `passwd` on the device to set one.
+</Note>
+
+### Serial Console Connection
+
+Connect via the USB port and use a terminal emulator at 115200 baud:
+
+```bash
+sudo screen /dev/serial/by-id/usb-Silicon_Labs_CP2105_...-if00-port0 115200
+```
+
+The `if00` suffix connects to Linux; the `if01` suffix connects to the STM32 microcontroller for power-cycle and low-level diagnostics.
+
+---
+
+## Network Configuration
+
+The SFP+ ports (`sfp0`, `sfp1`) are assigned static IP addresses by default:
+
+| Interface | Default IP | Default MTU |
+|-----------|-----------|-------------|
+| `eth0` | DHCP | — |
+| `sfp0` | 192.168.10.2/24 | 9000 |
+| `sfp1` | 192.168.20.2/24 | 9000 |
+
+If MTU mismatches cause streaming errors, set the host interface MTU to match:
+
+```bash
+sudo ifconfig eth0 mtu 9000
+```
+
+### FPGA Image Flavors
+
+Select the appropriate FPGA image for your SFP+ configuration:
+
+| Flavor | SFP+ Port 0 | SFP+ Port 1 |
+|--------|-------------|-------------|
+| HG (default) | 1 GigE | 10 GigE |
+| XG | 10 GigE | 10 GigE |
+| HA | 1 GigE | Aurora |
+| XA | 10 GigE | Aurora |
+| AA | Aurora | Aurora |
+| WX | White Rabbit | 10 GigE |
+
+Load a new FPGA image with:
+
+```bash
+uhd_image_loader --args type=n3xx,addr=ni-n3xx-<SERIAL>,XG
+```
+
+---
+
+## Using the N3xx from UHD
+
+### C++ Initialization
+
+```cpp
+// Connect to any N3xx device on the network
+auto usrp = uhd::usrp::multi_usrp::make("type=n3xx");
+
+// Connect to a specific device by IP address
+auto usrp = uhd::usrp::multi_usrp::make("type=n3xx,addr=192.168.10.2");
+```
+
+### Subdev Specifications
+
+**N300 / N310:**
+
+| Panel Label | Subdev Spec |
+|-------------|-------------|
+| RF0 | A:0 |
+| RF1 | A:1 |
+| RF2 | B:0 (N310 only) |
+| RF3 | B:1 (N310 only) |
+
+**N320 / N321:**
+
+| Panel Label | Subdev Spec |
+|-------------|-------------|
+| RF0 | A:0 |
+| RF1 | B:0 |
+
+```cpp
+// Map RF0 to channel 0 and RF3 to channel 1 (N310)
+auto usrp = uhd::usrp::multi_usrp::make("type=n3xx");
+usrp->set_rx_subdev_spec("A:0 B:1");
+usrp->set_rx_gain(20.0, 0);  // RF0
+usrp->set_rx_gain(20.0, 1);  // RF3
+```
+
+---
+
+## Device Arguments
+
+| Key | Description | Supported Devices | Example |
+|-----|-------------|-------------------|---------|
+| `addr` | IPv4 address of primary SFP+ port | All N3xx | `addr=192.168.10.2` |
+| `second_addr` | IPv4 address of secondary SFP+ port | All N3xx | `second_addr=192.168.20.2` |
+| `mgmt_addr` | RPC client connection address (defaults to `addr`) | All N3xx | `mgmt_addr=ni-n3xx-311FE00` |
+| `master_clock_rate` | Master clock rate in Hz | N310 | `master_clock_rate=125e6` |
+| `time_source` | PPS source | All N3xx | `time_source=external` |
+| `clock_source` | Reference clock source | All N3xx | `clock_source=gpsdo` |
+| `ref_clk_freq` | External reference clock frequency (default 10 MHz) | N310 | `ref_clk_freq=20e6` |
+| `init_cals` | Initial RFIC calibration bitmask | N310 | `init_cals=BASIC` |
+| `tracking_cals` | Tracking calibration bitmask | N310 | `tracking_cals=TX_QEC\|RX_QEC` |
+| `rx_lo_source` | RX LO source at init | N310 | `rx_lo_source=external` |
+| `tx_lo_source` | TX LO source at init | N310 | `tx_lo_source=external` |
+| `force_reinit` | Force full reinitialization | N310 | `force_reinit=1` |
+| `serialize_init` | Serial motherboard initialization | All N3xx | `serialize_init=1` |
+| `force_mtu` | Manually set network MTU | All N3xx | `force_mtu=8000` |
+
+---
+
+## Clock and Time Synchronization
+
+Set clock and time sources using the `clock_source` and `time_source` device arguments or API calls:
+
+| `clock_source` | `time_source` | Notes |
+|----------------|---------------|-------|
+| `internal` | `internal` | Default |
+| `external` | `internal` | Frequency reference only |
+| `external` | `external` | Synchronized frequency and time |
+| `gpsdo` | `gpsdo` | Works even without GPS reception |
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make(
+    "type=n3xx,clock_source=external,time_source=external");
+```
+
+### White Rabbit Synchronization
+
+For sub-nanosecond synchronization via IEEE 1588 extension, load the WX FPGA image and set time source to `sfp0`:
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make(
+    "type=n3xx,clock_source=internal,time_source=sfp0");
+```
+
+<Warning>
+When using White Rabbit, SFP0 is reserved for the timing reference and cannot carry data traffic.
+</Warning>
+
+---
+
+## Front-Panel GPIO (N300/N310/N320)
+
+The N3xx series provides 12 programmable GPIO pins on a DB15 front-panel connector. Each pin can be driven from Linux (PS) or by UHD (radio ATR or GPIO mode):
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make("type=n3xx");
+auto gpio_src = usrp->get_gpio_src("FP0");
+
+// Pin 0 driven from Linux (PS)
+gpio_src[0] = "PS";
+// Pins 1–2 driven by channel 0
+gpio_src[1] = "RF0";
+gpio_src[2] = "RF0";
+usrp->set_gpio_src("FP0", gpio_src);
+
+// Pin 1 tracks ATR RX state; pin 2 is hard-coded high
+usrp->set_gpio_attr("FP0A", "CTRL", 0x2, 0x6);  // 1 = ATR, 0 = GPIO
+usrp->set_gpio_attr("FP0A", "DDR",  0x6, 0x6);  // 1 = output
+usrp->set_gpio_attr("FP0A", "ATR_RX", 0x2, 0x2);
+usrp->set_gpio_attr("FP0A", "OUT",    0x4, 0x4); // hard-code pin 2 high
+```
+
+<Note>
+The N321 does not have a front-panel GPIO connector due to the space occupied by its LO distribution board.
+</Note>
+
+---
+
+## Troubleshooting
+
+### Streaming Errors
+
+If you encounter sequence errors, verify that the host and device MTU settings match. The default N3xx MTU is 9000:
+
+```bash
+sudo ifconfig eth0 mtu 9000
+```
+
+### Built-in Self-Test
+
+Run `n3xx_bist` on the device to verify hardware:
+
+```bash
+n3xx_bist gpsdo       # Test GPSDO
+n3xx_bist standard    # Run standard peripheral tests
+```
+
+---
+
+## Additional Resources
+
+- [MPM Architecture](/driver/utilities)
+- [RFNoC Overview](/rfnoc/introduction)
+- [Transport Configuration](/driver/transport)
+- [Using Ethernet-Based Synchronization on N3xx Devices](https://kb.ettus.com/Using_Ethernet-Based_Synchronization_on_the_USRP%E2%84%A2_N3xx_Devices)

@@ -1,0 +1,418 @@
+---
+title: "multi_usrp: High-Level USRP Control API"
+sidebarTitle: "multi_usrp"
+description: "Complete reference for uhd::usrp::multi_usrp — the primary C++ interface for configuring and streaming with single and multi-channel USRP devices."
+---
+
+The `multi_usrp` class is the primary high-level C++ interface to USRP hardware. It abstracts a single USRP with one or more channels, or multiple USRPs in a homogeneous configuration, into a unified control surface. Every RF parameter — frequency, gain, sample rate, bandwidth, clocking, and synchronization — is accessible through this class. For most applications, `multi_usrp` is the only object you need to configure hardware before calling `get_rx_stream()` or `get_tx_stream()` to begin sample transfers.
+
+<Note>
+For Generation-3 USRPs and above (X3xx, X4xx, N3xx), the `multi_usrp` interface is internally backed by the RFNoC graph. Advanced users requiring per-block control should consider using [`rfnoc_graph`](/api/rfnoc-graph) directly.
+</Note>
+
+## Factory
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+
+uhd::usrp::multi_usrp::sptr usrp = uhd::usrp::multi_usrp::make(args);
+```
+
+<ParamField path="args" type="uhd::device_addr_t" required>
+  Device address arguments. Pass an empty string to find and connect to the first available USRP, or specify keys such as `"addr=192.168.10.2"`, `"type=b200"`, or `"serial=30C419A"` to target a specific device.
+</ParamField>
+
+**Return type:** `uhd::usrp::multi_usrp::sptr` (a `std::shared_ptr<multi_usrp>`)
+
+**Throws:** `uhd::key_error` if no device is found; `uhd::index_error` if fewer devices are found than expected.
+
+```cpp
+// Single device
+auto usrp = uhd::usrp::multi_usrp::make("addr=192.168.10.2");
+
+// First available device of any type
+auto usrp = uhd::usrp::multi_usrp::make("");
+
+// Two-board MIMO configuration
+uhd::device_addr_t args;
+args["addr0"] = "192.168.10.2";
+args["addr1"] = "192.168.10.3";
+auto usrp = uhd::usrp::multi_usrp::make(args);
+```
+
+---
+
+## Streamers
+
+Streamers are the objects used to actually move samples between the host and the device. Call these after all hardware parameters have been configured.
+
+### `get_rx_stream()`
+
+```cpp
+uhd::rx_streamer::sptr get_rx_stream(const uhd::stream_args_t& args);
+```
+
+Returns an RX streamer object configured according to `args`. See [`rx_streamer`](/api/streaming) for the full receive API.
+
+### `get_tx_stream()`
+
+```cpp
+uhd::tx_streamer::sptr get_tx_stream(const uhd::stream_args_t& args);
+```
+
+Returns a TX streamer object configured according to `args`. See [`tx_streamer`](/api/streaming) for the full transmit API.
+
+```cpp
+uhd::stream_args_t stream_args("fc32", "sc16");
+stream_args.channels = {0};
+
+auto rx_stream = usrp->get_rx_stream(stream_args);
+auto tx_stream = usrp->get_tx_stream(stream_args);
+```
+
+---
+
+## Frequency Control
+
+Tuning moves the hardware LO and DSP chain so that the specified center frequency falls in-band. The actual tuned frequency may differ slightly from the requested value due to hardware coercion — always call the `get_*_freq()` accessor after tuning.
+
+### `set_rx_freq()`
+
+```cpp
+uhd::tune_result_t set_rx_freq(const uhd::tune_request_t& tune_request,
+                                size_t chan = 0);
+```
+
+<ParamField path="tune_request" type="uhd::tune_request_t" required>
+  Frequency tuning request. The simplest form is `uhd::tune_request_t(freq_hz)`, which uses automatic LO and DSP placement. For manual control, set `rf_freq_policy` and `dsp_freq_policy` to `POLICY_MANUAL` and provide explicit `rf_freq` and `dsp_freq` values. See [`tune_request_t`](/api/types).
+</ParamField>
+
+<ParamField path="chan" type="size_t" default="0">
+  Channel index (0-based). Use `multi_usrp::ALL_CHANS` to apply to all channels simultaneously.
+</ParamField>
+
+### `set_tx_freq()`
+
+```cpp
+uhd::tune_result_t set_tx_freq(const uhd::tune_request_t& tune_request,
+                                size_t chan = 0);
+```
+
+Identical signature to `set_rx_freq()`, applied to the transmit chain.
+
+### `get_rx_freq()` / `get_tx_freq()`
+
+```cpp
+double get_rx_freq(size_t chan = 0);
+double get_tx_freq(size_t chan = 0);
+```
+
+Returns the actual center frequency in Hz after hardware coercion.
+
+```cpp
+// Tune RX channel 0 to 2.4 GHz
+usrp->set_rx_freq(2.4e9, 0);
+double actual = usrp->get_rx_freq(0);
+std::cout << "Actual RX freq: " << actual / 1e9 << " GHz\n";
+
+// Manual LO placement with DSP offset
+uhd::tune_request_t tr;
+tr.target_freq    = 915e6;
+tr.rf_freq_policy = uhd::tune_request_t::POLICY_MANUAL;
+tr.rf_freq        = 910e6;
+tr.dsp_freq_policy = uhd::tune_request_t::POLICY_MANUAL;
+tr.dsp_freq       = 5e6;
+usrp->set_rx_freq(tr, 0);
+```
+
+---
+
+## Gain Control
+
+Gain values are in dB. The device will coerce the requested gain to the nearest valid value. Normalized gain maps the full hardware range to [0.0, 1.0].
+
+### `set_rx_gain()` / `set_tx_gain()`
+
+```cpp
+void set_rx_gain(double gain, size_t chan = 0);
+void set_rx_gain(double gain, const std::string& name, size_t chan = 0);
+
+void set_tx_gain(double gain, size_t chan = 0);
+void set_tx_gain(double gain, const std::string& name, size_t chan = 0);
+```
+
+<ParamField path="gain" type="double" required>
+  Gain in dB. Will be coerced to the valid range; call `get_rx_gain_range()` or `get_tx_gain_range()` to query limits.
+</ParamField>
+
+<ParamField path="name" type="std::string" default="ALL_GAINS">
+  Name of a specific gain stage (e.g., `"PGA"`, `"LNA"`). Defaults to `multi_usrp::ALL_GAINS` which applies the gain across all stages.
+</ParamField>
+
+<ParamField path="chan" type="size_t" default="0">
+  Channel index.
+</ParamField>
+
+### `get_rx_gain()` / `get_tx_gain()`
+
+```cpp
+double get_rx_gain(size_t chan = 0);
+double get_rx_gain(const std::string& name, size_t chan = 0);
+
+double get_tx_gain(size_t chan = 0);
+double get_tx_gain(const std::string& name, size_t chan = 0);
+```
+
+### Normalized Gain
+
+```cpp
+void   set_normalized_rx_gain(double gain, size_t chan = 0);
+double get_normalized_rx_gain(size_t chan = 0);
+```
+
+Normalized gain is a value between 0.0 (minimum) and 1.0 (maximum). This is device-independent and maps linearly across the available dB range.
+
+```cpp
+usrp->set_rx_gain(30.0, 0);          // 30 dB absolute
+usrp->set_normalized_rx_gain(0.7, 0); // 70% of full range
+```
+
+---
+
+## Sample Rate
+
+All channels on a device share a single RX sample rate and a single TX sample rate.
+
+### `set_rx_rate()` / `set_tx_rate()`
+
+```cpp
+void set_rx_rate(double rate, size_t chan = ALL_CHANS);
+void set_tx_rate(double rate, size_t chan = ALL_CHANS);
+```
+
+<ParamField path="rate" type="double" required>
+  Sample rate in samples per second (Sps). The device will coerce to the nearest valid rate. Call `get_rx_rate()` or `get_tx_rate()` after setting to read back the actual coerced value.
+</ParamField>
+
+### `get_rx_rate()` / `get_tx_rate()`
+
+```cpp
+double get_rx_rate(size_t chan = 0);
+double get_tx_rate(size_t chan = 0);
+```
+
+```cpp
+usrp->set_rx_rate(1e6);   // Request 1 Msps
+double actual = usrp->get_rx_rate(0);
+std::cout << "Actual RX rate: " << actual / 1e6 << " Msps\n";
+```
+
+---
+
+## Bandwidth
+
+Frontend analog bandwidth controls the receive or transmit filter width on the daughterboard.
+
+### `set_rx_bandwidth()` / `set_tx_bandwidth()`
+
+```cpp
+void set_rx_bandwidth(double bandwidth, size_t chan = 0);
+void set_tx_bandwidth(double bandwidth, size_t chan = 0);
+```
+
+<ParamField path="bandwidth" type="double" required>
+  Analog bandwidth in Hz. The device coerces to the nearest supported value.
+</ParamField>
+
+```cpp
+usrp->set_rx_bandwidth(5e6, 0);  // 5 MHz analog filter
+usrp->set_tx_bandwidth(5e6, 0);
+```
+
+---
+
+## Clocking and Synchronization
+
+Proper clocking setup is essential for timed operations and multi-device synchronization.
+
+### `set_clock_source()`
+
+```cpp
+void set_clock_source(const std::string& source,
+                      const size_t mboard = ALL_MBOARDS);
+```
+
+<ParamField path="source" type="std::string" required>
+  Clock source name. Common values: `"internal"` (default), `"external"` (REF IN SMA), `"gpsdo"`. Available sources are device-dependent; query with `get_clock_sources()`.
+</ParamField>
+
+### `set_time_source()`
+
+```cpp
+void set_time_source(const std::string& source,
+                     const size_t mboard = ALL_MBOARDS);
+```
+
+<ParamField path="source" type="std::string" required>
+  Time/PPS source. Common values: `"internal"`, `"external"`, `"gpsdo"`. Controls which signal is used as the 1 PPS reference for time alignment.
+</ParamField>
+
+### `set_time_now()`
+
+```cpp
+void set_time_now(const uhd::time_spec_t& time_spec,
+                  size_t mboard = ALL_MBOARDS);
+```
+
+Sets the device time register immediately. For multi-board setups, boards are updated serially and will not be perfectly synchronized — use `set_time_next_pps()` instead.
+
+### `set_time_next_pps()`
+
+```cpp
+void set_time_next_pps(const uhd::time_spec_t& time_spec,
+                       size_t mboard = ALL_MBOARDS);
+```
+
+Latches the provided time into hardware on the next rising edge of the PPS signal. This is the preferred method for synchronizing multiple devices. Wait at least 1 second after this call before issuing timed commands.
+
+```cpp
+// Synchronize two boards to an external GPS reference
+usrp->set_clock_source("gpsdo");
+usrp->set_time_source("gpsdo");
+// Latch time=0 on next PPS
+usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+std::this_thread::sleep_for(std::chrono::seconds(1));
+// Now both boards share a synchronized timebase
+```
+
+---
+
+## Sensors
+
+Sensors report hardware-measured quantities such as lock status, temperature, and RSSI.
+
+### `get_rx_sensor()`
+
+```cpp
+uhd::sensor_value_t get_rx_sensor(const std::string& name, size_t chan = 0);
+```
+
+Returns the value of the named RX sensor for the given channel. Query available names with `get_rx_sensor_names(chan)`.
+
+### `get_tx_sensor()`
+
+```cpp
+uhd::sensor_value_t get_tx_sensor(const std::string& name, size_t chan = 0);
+```
+
+### `get_mboard_sensor()`
+
+```cpp
+uhd::sensor_value_t get_mboard_sensor(const std::string& name,
+                                       size_t mboard = 0);
+```
+
+Returns a motherboard-level sensor value (e.g., `"ref_locked"`, `"gps_locked"`, `"temp"`).
+
+```cpp
+// Check if the LO is locked before streaming
+auto lo_lock = usrp->get_rx_sensor("lo_locked", 0);
+if (!lo_lock.to_bool()) {
+    std::cerr << "LO not locked!\n";
+}
+
+// Read motherboard reference lock
+auto ref_lock = usrp->get_mboard_sensor("ref_locked", 0);
+std::cout << ref_lock.to_pp_string() << "\n";
+```
+
+---
+
+## Subdev Specification
+
+Subdev specs map logical channels to physical daughterboard frontends. The format is `"Slot:Name"`, for example `"A:A"` (slot A, frontend A).
+
+### `set_rx_subdev_spec()`
+
+```cpp
+void set_rx_subdev_spec(const uhd::usrp::subdev_spec_t& spec,
+                        size_t mboard = ALL_MBOARDS);
+```
+
+### `set_tx_subdev_spec()`
+
+```cpp
+void set_tx_subdev_spec(const uhd::usrp::subdev_spec_t& spec,
+                        size_t mboard = ALL_MBOARDS);
+```
+
+```cpp
+// Map board 0 (192.168.10.2) RX to frontend A:A  → channel 0
+usrp->set_rx_subdev_spec("A:A", 0);
+// Map board 1 (192.168.10.3) RX to frontend A:B  → channel 1
+usrp->set_rx_subdev_spec("A:B", 1);
+// Both TX channels use frontend A:AB
+usrp->set_tx_subdev_spec("A:AB", uhd::usrp::multi_usrp::ALL_MBOARDS);
+```
+
+---
+
+## Complete RX Streaming Example
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+#include <uhd/stream.hpp>
+#include <uhd/types/tune_request.hpp>
+#include <complex>
+#include <vector>
+#include <iostream>
+
+int main() {
+    // 1. Open device
+    auto usrp = uhd::usrp::multi_usrp::make("type=b200");
+
+    // 2. Configure RF parameters
+    usrp->set_rx_rate(1e6);
+    usrp->set_rx_freq(915e6, 0);
+    usrp->set_rx_gain(40.0, 0);
+    usrp->set_rx_bandwidth(1e6, 0);
+
+    // 3. Create streamer
+    uhd::stream_args_t stream_args("fc32", "sc16");
+    stream_args.channels = {0};
+    auto rx_stream = usrp->get_rx_stream(stream_args);
+
+    // 4. Issue stream command to start continuous streaming
+    uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+    cmd.stream_now = true;
+    rx_stream->issue_stream_cmd(cmd);
+
+    // 5. Receive samples
+    const size_t num_samps = 1000;
+    std::vector<std::complex<float>> buf(num_samps);
+    uhd::rx_metadata_t md;
+
+    size_t received = rx_stream->recv(&buf.front(), num_samps, md, 3.0);
+
+    if (md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
+        std::cerr << "RX error: " << md.strerror() << "\n";
+    }
+    std::cout << "Received " << received << " samples\n";
+
+    // 6. Stop streaming
+    uhd::stream_cmd_t stop(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS);
+    rx_stream->issue_stream_cmd(stop);
+    return 0;
+}
+```
+
+---
+
+## Constants
+
+| Constant | Description |
+|---|---|
+| `multi_usrp::ALL_MBOARDS` | Wildcard: apply to all motherboards |
+| `multi_usrp::ALL_CHANS` | Wildcard: apply to all channels |
+| `multi_usrp::ALL_GAINS` | Wildcard: apply gain across all gain stages |
+| `multi_usrp::ALL_LOS` | Wildcard: apply LO setting to all LO stages |

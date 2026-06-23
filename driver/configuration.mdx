@@ -1,0 +1,299 @@
+---
+title: "Configuring USRP Devices, Streamers, and Tuning"
+sidebarTitle: "Configuration"
+description: "Configure USRP devices via address string args, subdev specs, stream args, and two-stage RF/DSP tuning with tune_request_t in UHD."
+---
+
+Configuration in UHD flows through the same `--args` string used to identify a device. After UHD locates the device using identifier keys such as `type` or `serial`, it passes any remaining key/value pairs to the device as initialization-time settings. This means a single argument string can both select a B200 and set its master clock rate in one step.
+
+## Device Configuration via Address String
+
+Any key/value pair not used for identification is forwarded to the device during initialization. For example:
+
+```bash
+rx_samples_to_file --args type=b200,master_clock_rate=16e6
+```
+
+This first finds a B200/B210 by `type`, then applies `master_clock_rate=16e6` before the device is ready for use.
+
+### Common Configuration Keys
+
+The table below covers the most frequently used configuration options. Individual device manuals may document additional device-specific keys.
+
+| Key | Description | Supported Devices | Example Value |
+|---|---|---|---|
+| `master_clock_rate` | Master clock rate in Hz | X3x0, X4x0, B2x0, B1x0, E3xx, E1x0, N3xx | `master_clock_rate=16e6` |
+| `dboard_clock_rate` | Daughterboard clock rate in Hz | X3x0 | `dboard_clock_rate=50e6` |
+| `system_ref_rate` | Frequency of external reference in Hz | X3x0 | `system_ref_rate=11.52e6` |
+| `fpga` | Path to alternative FPGA bitfile | All USB devices, X3x0 (PCIe), E310, E1x0 | `fpga=/path/to/bitfile.bit` |
+| `fw` | Path to alternative firmware | All USB devices, X3x0 | `fw=/path/to/fw.bin` |
+| `ignore-cal-file` | Ignore existing device calibration files | All devices with cal-file support | `ignore-cal-file=1` |
+| `mcr` | Override master clock rate (USRP1 external clock) | USRP1 | `mcr=52e6` |
+| `niusrprpc_port` | RPC port for NI USRP RIO | X3x0 | `niusrprpc_port=5445` |
+| `self_cal_adc_delay` | Run ADC transfer delay self-calibration | X3x0 | `self_cal_adc_delay=1` |
+| `ext_adc_self_test` | Run an extended ADC self-test | X3x0 | `ext_adc_self_test=1` |
+| `serialize_init` | Force serial initialization of motherboards | X3x0, all MPM devices | `serialize_init=1` |
+| `force_reinit` | Force reinitialization of device | N3x0, X4x0 | `force_reinit=1` |
+| `force_mtu` | Skip MTU detection and use this fixed value | X3x0, E3x0, N3x0, X4x0 | `force_mtu=8000` |
+| `recover_mb_eeprom` | Disable version checks for EEPROM recovery | X3x0 | `recover_mb_eeprom=1` |
+| `blank_eeprom` | **Caution:** Erases EEPROM and can damage device | X3x0 | `blank_eeprom=1` |
+
+<Warning>
+`blank_eeprom=1` will erase the motherboard EEPROM. Only use this key if you fully understand the consequences — it can render the device unusable.
+</Warning>
+
+<Note>
+`force_mtu` is only recommended when automatic MTU detection fails due to a restrictive network configuration. For per-link MTU control, prefer the `mtu` stream argument instead.
+</Note>
+
+## Subdevice Specification
+
+A subdev spec string tells UHD which daughterboard slot and frontend to activate on a given motherboard. The format is:
+
+```
+<slot>:<frontend>
+```
+
+For example, to select a WBX daughterboard in slot B:
+
+```
+B:0
+```
+
+<Tabs>
+  <Tab title="Single channel">
+    Most configurations use a single slot/frontend pair:
+
+    ```bash
+    # Use the A-side slot, frontend 0
+    --subdev "A:0"
+
+    # Use the B-side slot, frontend 0
+    --subdev "B:0"
+    ```
+  </Tab>
+  <Tab title="Two channels (X3x0 / B2x0)">
+    Separate multiple specs with a space. On an X300 with SBX in slot A and CBX in slot B:
+
+    ```bash
+    # Channel 0 = A:0, Channel 1 = B:0
+    --subdev "A:0 B:0"
+
+    # Swap order: Channel 0 = B:0, Channel 1 = A:0
+    --subdev "B:0 A:0"
+    ```
+  </Tab>
+  <Tab title="B210 (integrated AD9361)">
+    The B210 has two radios on a single integrated daughterboard, accessed via separate frontends:
+
+    ```bash
+    # Both radios on the B210
+    --subdev "A:A A:B"
+    ```
+  </Tab>
+  <Tab title="BasicRX on USRP2 / N200">
+    Some daughterboards expose multiple named frontends:
+
+    ```bash
+    --subdev "B:AB"
+    # -- OR --
+    --subdev "B:A"
+    # -- OR --
+    --subdev "B:B"
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+A subdev spec string always pertains to a **single** USRP. When running multiple USRPs together, set a subdev spec for each device individually.
+</Note>
+
+### Slot Names
+
+All USRP family motherboards have at least one slot named **A:**. The USRP1 and X3x0 have two slots, **A:** and **B:**. On devices where only one slot is declared in the subdev spec, the other slot is treated as unused.
+
+## Stream Args Configuration
+
+When creating a streamer with `get_rx_stream()` or `get_tx_stream()`, you must provide a `uhd::stream_args_t` object. It has four components:
+
+<CardGroup cols={2}>
+  <Card title="cpu_format" icon="microchip">
+    Format of samples in host memory (e.g., `fc32`, `sc16`)
+  </Card>
+  <Card title="otw_format" icon="network-wired">
+    Format of samples over the wire (e.g., `sc16`, `sc8`)
+  </Card>
+  <Card title="args" icon="sliders">
+    Additional key/value pairs (e.g., `spp=200`)
+  </Card>
+  <Card title="channels" icon="list-ol">
+    List of device channel indices to include in the stream
+  </Card>
+</CardGroup>
+
+### CPU Format
+
+The CPU format describes how samples are stored in the host application's memory buffers.
+
+| String | C++ Type | Notes |
+|---|---|---|
+| `fc64` | `std::complex<double>` | Complex double-precision |
+| `fc32` | `std::complex<float>` | Complex single-precision (most common) |
+| `sc16` | `std::complex<int16_t>` | Complex signed 16-bit integer |
+| `sc8` | `std::complex<int8_t>` | Complex signed 8-bit integer |
+| `f32` | `float` | Single-precision real |
+| `s16` | `int16_t` | Signed 16-bit real |
+| `s8` | `int8_t` | Signed 8-bit real |
+
+### Over-the-Wire (OTW) Format
+
+The OTW format describes how samples are packed for transport between host and device.
+
+| String | Supporting Devices | Notes |
+|---|---|---|
+| `sc16` | B2xx, N2xx, N3xx, E3xx, X3xx, X4xx | Default; best dynamic range |
+| `sc12` | B2xx | Intermediate precision |
+| `sc8` | B2xx, N2xx | Doubles available bandwidth at reduced dynamic range |
+| `fc32` | B2xx | Complex float over the wire |
+
+### Additional Stream Args
+
+Pass extra settings via `stream_args.args` as key/value string pairs:
+
+```cpp
+stream_args.args["spp"] = std::to_string(200);    // samples per packet
+stream_args.args["underflow_policy"] = "next_burst"; // TX underflow recovery
+stream_args.args["fullscale"] = "1.0";             // float full-scale level
+stream_args.args["streamer"] = "replay_buffered";  // use Replay block DRAM buffering
+stream_args.args["throttle"] = "50%";              // limit rate to 50%
+```
+
+### Channel Mapping
+
+The `channels` field maps streamer port indices to device channel indices. This is most useful when you want to stream from a non-default channel or swap channel ordering.
+
+```cpp
+// Two-channel stream: streamer port 0 → device channel 0, port 1 → device channel 1
+stream_args.channels = {0, 1};
+
+// Swap order
+stream_args.channels = {1, 0};
+
+// Single-channel stream from the B-side radio only
+stream_args.channels = {1};
+```
+
+## Two-Stage Tuning
+
+Every USRP has two stages of tuning in its signal chain:
+
+1. **RF front-end** — the local oscillator (LO) translates between RF and IF
+2. **DSP** — the CORDIC on the FPGA shifts between IF and baseband
+
+In the default automatic mode, UHD tunes the RF stage as close as possible to the requested center frequency and uses the DSP stage to correct the remaining error. The `uhd::tune_request_t` object gives you explicit control over both stages.
+
+<Steps>
+  <Step title="Simple frequency set (automatic tuning)">
+    For most applications, a direct frequency set is sufficient:
+
+    ```cpp
+    // Tune RX chain to 915 MHz
+    usrp->set_rx_freq(915e6);
+
+    // Tune TX chain to 915 MHz
+    usrp->set_tx_freq(915e6);
+    ```
+  </Step>
+  <Step title="Tune with an LO offset">
+    Shifting the LO away from the center frequency moves the DC component out of your passband:
+
+    ```cpp
+    double target_freq  = 915e6;
+    double lo_offset    = 5e6;   // LO sits 5 MHz above center
+
+    uhd::tune_request_t tune_req(target_freq, lo_offset);
+    usrp->set_rx_freq(tune_req);
+    ```
+  </Step>
+  <Step title="Force integer-N tuning">
+    Integer-N mode reduces spurs at the cost of tuning resolution. Supported on WBX, SBX, CBX, UBX, and their variants:
+
+    ```cpp
+    uhd::tune_request_t tune_req(915e6);
+    tune_req.args = uhd::device_addr_t("mode_n=integer");
+    usrp->set_rx_freq(tune_req);
+    ```
+  </Step>
+  <Step title="Multi-channel shared-LO tuning">
+    On devices that share one LO per daughterboard (e.g., N300/N310), offset each channel so they share the same LO frequency:
+
+    ```cpp
+    // Channel 0: 806 MHz, LO offset -5 MHz → LO at 801 MHz
+    uhd::tune_request_t tune_req_ch0(806e6, -5e6);
+    usrp->set_tx_freq(tune_req_ch0, 0);
+
+    // Channel 1: 796 MHz, LO offset +5 MHz → LO at 801 MHz (shared)
+    uhd::tune_request_t tune_req_ch1(796e6, 5e6);
+    usrp->set_tx_freq(tune_req_ch1, 1);
+    ```
+  </Step>
+</Steps>
+
+### LO Lock and Settling Time
+
+After any tune command, the RF front-end needs time for the LO to lock before you start streaming. Either poll the sensor or sleep for a conservative interval:
+
+<Tabs>
+  <Tab title="Poll lo_locked sensor">
+    ```cpp
+    usrp->set_rx_freq(915e6);
+    while (!usrp->get_rx_sensor("lo_locked").to_bool()) {
+        // sleep a few milliseconds between polls
+    }
+    // Now safe to issue stream command
+    usrp->issue_stream_cmd(stream_cmd);
+    ```
+  </Tab>
+  <Tab title="Fixed sleep">
+    ```cpp
+    usrp->set_rx_freq(915e6);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    usrp->issue_stream_cmd(stream_cmd);
+    ```
+  </Tab>
+</Tabs>
+
+## Setting Gain, Rate, and Bandwidth
+
+```cpp
+// Set sample rate (UHD will find the nearest valid rate)
+usrp->set_rx_rate(10e6);   // 10 Msps RX
+usrp->set_tx_rate(10e6);   // 10 Msps TX
+
+// Set gain (0 to max_gain, device-dependent)
+usrp->set_rx_gain(30.0);   // 30 dB RX gain
+usrp->set_tx_gain(20.0);   // 20 dB TX gain
+
+// Set analog bandwidth (optional, device-dependent)
+usrp->set_rx_bandwidth(8e6);  // 8 MHz analog filter
+usrp->set_tx_bandwidth(8e6);
+```
+
+<Tip>
+Sample rates must satisfy `master_clock_rate / desired_sample_rate = integer`. On devices with a fixed master clock (USRP1, USRP2, N2xx), fewer valid rates are available. On B2xx and E3xx, UHD can automatically select a compatible master clock rate.
+</Tip>
+
+## MPM Configuration Files
+
+For MPM-based devices (N3xx, E320, E31x), additional defaults can be set in the device's MPM configuration file and overridden by UHD at runtime.
+
+| Key | Description | Devices | Example |
+|---|---|---|---|
+| `enable_gps` | Power the GPSDO on/off | N3xx, E320 | `enable_gps=0` |
+| `clock_source` | Default clock source | N3xx, E320, E31x | `clock_source=external` |
+| `time_source` | Default time source | N3xx, E320, E31x | `time_source=external` |
+| `rx_lo_source` | Default RX LO source | N310 | `rx_lo_source=external` |
+| `tx_lo_source` | Default TX LO source | N310 | `tx_lo_source=external` |
+| `master_clock_rate` | Default master clock rate | N3xx, E320, E31x | `master_clock_rate=1e6` |
+| `skip_boot_init` | Defer device init to first UHD run | N3xx | `skip_boot_init=1` |
+| `no_reload_fpga` | Don't load idle image after session ends | E31x | `no_reload_fpga=1` |

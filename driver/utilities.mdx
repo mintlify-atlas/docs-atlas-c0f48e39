@@ -1,0 +1,484 @@
+---
+title: "UHD Command-Line Utilities: Tools and Reference Guide"
+sidebarTitle: "Utilities"
+description: "Reference for UHD CLI tools: discover devices, probe capabilities, download FPGA images, program firmware, and calibrate RF frontends."
+---
+
+UHD ships a suite of command-line utilities that cover the full device lifecycle — from initial discovery and capability inspection through FPGA image management, RF self-calibration, and live property control. Each tool accepts device address arguments via `--args` using the same key/value format understood by the UHD API, so the filtering you learn in one tool carries over to all others.
+
+<Note>
+All utilities print diagnostics to **stderr** (via `std::clog`). Standard output is reserved for structured results and is safe to redirect or pipe. No UHD tool prints log messages to stdout.
+</Note>
+
+## Discovery and Inspection
+
+<AccordionGroup>
+  <Accordion title="uhd_find_devices — Enumerate attached USRPs">
+
+`uhd_find_devices` scans all transport layers (USB, Ethernet, PCIe) for supported USRP hardware and prints a numbered list of discovered devices with their address parameters. It appends `find_all=1` internally so that every reachable device is reported regardless of whether it is currently in use.
+
+**Usage**
+
+```bash
+uhd_find_devices [--args <device-addr-args>]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--args` | Key/value filter string; accepts any device address key (`type`, `serial`, `addr`, `name`, `vid`, `pid`) |
+
+**Examples**
+
+```bash
+# Discover all attached devices
+uhd_find_devices
+
+# Filter by hardware series
+uhd_find_devices --args="type=x300"
+
+# Filter by serial number
+uhd_find_devices --args="serial=31C5AB2"
+
+# Filter by network address
+uhd_find_devices --args="addr=192.168.10.2"
+
+# Filter by user-assigned name
+uhd_find_devices --args="name=lab_b210"
+
+# Combine filters
+uhd_find_devices --args="type=b200,serial=31C5AB2"
+
+# Skip MPM reachability check for faster discovery
+uhd_find_devices --args="mpm_check_reachability=no"
+```
+
+**Example output**
+
+```
+--------------------------------------------------
+-- UHD Device 0
+--------------------------------------------------
+Device Address:
+    serial: 31C5AB2
+    addr: 192.168.10.2
+    type: x300
+    product: X310
+```
+
+  </Accordion>
+
+  <Accordion title="uhd_usrp_probe — Print device tree and capabilities">
+
+`uhd_usrp_probe` opens a live connection to the specified device and prints a formatted tree of its properties: motherboard EEPROM data, firmware/FPGA versions, time and clock source options, RX/TX frontends, frequency ranges, gain elements, available antennas, DSP blocks, and RFNoC block topology.
+
+**Usage**
+
+```bash
+uhd_usrp_probe [--args <device-addr-args>] [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--args` | Device address and optional configuration key/value pairs |
+| `--tree` | Print the raw, complete UHD property tree instead of the formatted summary |
+| `--string <path>` | Query a single string value from the property tree |
+| `--double <path>` | Query a double-precision floating-point value from the property tree |
+| `--int <path>` | Query an integer value from the property tree |
+| `--sensor <path>` | Query a sensor value from the property tree |
+| `--range <path>` | Query a range (gain, bandwidth, frequency, …) from the property tree |
+| `--version` | Print the UHD version string and exit |
+| `--init-only` | Initialize the device without running any queries |
+| `--interactive-reg-iface <block-id>` | Open an interactive peek/poke shell for an RFNoC block's registers |
+
+**Examples**
+
+```bash
+# Probe the first available device
+uhd_usrp_probe
+
+# Probe a specific device by address
+uhd_usrp_probe --args="addr=192.168.10.2"
+
+# Probe a B210 connected over USB
+uhd_usrp_probe --args="type=b200,serial=31C5AB2"
+
+# Dump the full property tree
+uhd_usrp_probe --args="addr=192.168.10.2" --tree
+
+# Query a specific property tree path
+uhd_usrp_probe --args="addr=192.168.10.2" \
+  --string /mboards/0/name
+
+# Query the RX frequency range on slot A
+uhd_usrp_probe --args="addr=192.168.10.2" \
+  --range /mboards/0/dboards/A/rx_frontends/A/freq/range
+
+# Open an interactive register shell on an RFNoC Radio block
+uhd_usrp_probe --args="addr=192.168.10.2" \
+  --interactive-reg-iface 0/Radio#0
+```
+
+<Tip>
+The `--interactive-reg-iface` shell accepts `poke32 <addr> <data>`, `peek32 <addr>`, `help`, and `quit`. Addresses and data values may be given as decimal or hex (`0x…`). This shell is only available for RFNoC-capable devices.
+</Tip>
+
+  </Accordion>
+
+  <Accordion title="usrpctl — Query and control device properties">
+
+`usrpctl` is a Python-based front-end that provides a unified subcommand interface for device control. It discovers devices using the same address-argument format as `uhd_find_devices`, then dispatches to a named subcommand. The `-v` flag increases the UHD log verbosity fed to the underlying tools.
+
+**Usage**
+
+```bash
+usrpctl [id] [-v | -vv | ... | -vvvvv] <subcommand> [subcommand-args]
+```
+
+**Device identification**
+
+The optional positional `id` argument accepts any device address string (e.g. `"addr=192.168.10.2"` or `"serial=31C5AB2"`). When omitted, `usrpctl` operates on all discovered devices.
+
+**Subcommands**
+
+| Subcommand | Description |
+|------------|-------------|
+| `find` | List all devices matching the `id` filter — mirrors `uhd_find_devices` output |
+| `probe` | Run `uhd_usrp_probe` on the matched device; accepts `-tree` |
+| `reset` | Reset a subcomponent of the device; accepts `-mpm` to restart the MPM daemon |
+
+**Examples**
+
+```bash
+# Find all devices
+usrpctl find
+
+# Find a specific device by serial number
+usrpctl "serial=31C5AB2" find
+
+# Probe the device at a known address
+usrpctl "addr=192.168.10.2" probe
+
+# Probe and dump the property tree
+usrpctl "addr=192.168.10.2" probe -tree
+
+# Reset MPM on an N310
+usrpctl "addr=192.168.10.2" reset -mpm
+
+# Increase log verbosity (up to -vvvvv for trace)
+usrpctl -vv "addr=192.168.10.2" probe
+```
+
+<Note>
+`usrpctl` maps `-v` levels to UHD log levels by setting `UHD_LOG_CONSOLE_LEVEL` in the environment: one `-v` corresponds to `warning`, up to `-vvvvv` for `trace`.
+</Note>
+
+  </Accordion>
+</AccordionGroup>
+
+## Image Management
+
+<AccordionGroup>
+  <Accordion title="uhd_images_downloader — Download FPGA and firmware images">
+
+`uhd_images_downloader` fetches pre-built FPGA bitfiles and firmware images from Ettus Research's CDN and installs them into the UHD images directory. It uses a built-in manifest to select only the image packages that match the installed UHD version and records downloads in an `inventory.json` file to avoid re-downloading unchanged images.
+
+**Usage**
+
+```bash
+uhd_images_downloader [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `-t`, `--types <regex>` | Download only image packages whose names match the given regular expression (e.g. `x3.*` or `b2.*`) |
+| `-i`, `--install-location <path>` | Override the default install directory (`<prefix>/share/uhd/images`) |
+| `-l`, `--list-targets` | Print all available image package names and exit |
+| `-b`, `--base-url <url>` | Override the download base URL (default: `https://files.ettus.com/binaries/cache/`) |
+| `-y`, `--yes` | Skip confirmation prompts |
+| `-n`, `--dry-run` | Show what would be downloaded without actually downloading |
+| `--refetch` | Re-download all images even if the inventory shows them as current |
+| `-q`, `--quiet` | Decrease output verbosity |
+| `-v`, `--verbose` | Increase output verbosity |
+
+**Examples**
+
+```bash
+# Download all default image packages for the installed UHD version
+uhd_images_downloader
+
+# Download only X300/X310 images
+uhd_images_downloader --types "x3.*"
+
+# Download only B200 images into a custom directory
+uhd_images_downloader --types "b2.*" \
+  --install-location /opt/uhd/images
+
+# List all available image package names
+uhd_images_downloader --list-targets
+
+# Preview what would be downloaded
+uhd_images_downloader --dry-run
+
+# Force re-download of all images
+uhd_images_downloader --refetch --yes
+```
+
+<Warning>
+By default, `uhd_images_downloader` only fetches packages matching `(fpga|fw|windrv)_default`. Use `--types` to expand coverage to device-specific variants (e.g. large FPGA images for X410).
+</Warning>
+
+The `UHD_IMAGES_DIR` environment variable can hold a colon-separated list of directories that UHD searches for image files at runtime. Set it if you install images to a non-default location and cannot modify the UHD prefix.
+
+```bash
+export UHD_IMAGES_DIR=/opt/uhd/images:/backup/uhd/images
+```
+
+  </Accordion>
+
+  <Accordion title="uhd_image_loader — Program images onto a device">
+
+`uhd_image_loader` writes FPGA bitfiles and/or firmware images directly onto a connected USRP device's on-board storage. The `--args` string must include a `type=` key identifying the device family; without it the tool raises a runtime error. Interrupting a programming operation with Ctrl+C risks leaving the device in an unusable state — the tool warns on the first interrupt and provides recovery instructions if interrupted a second time.
+
+**Usage**
+
+```bash
+uhd_image_loader --args="type=<device-type>[,<extra-args>]" [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--args` | Device address args; **must** include `type=<device-type>` |
+| `--fw-path <path>` | Path to a custom firmware image file (uses the UHD default if omitted) |
+| `--fpga-path <path>` | Path to a custom FPGA bitfile (uses the UHD default if omitted) |
+| `--out-path <path>` | Output path for a downloaded FPGA `.bit` file (used with `--download`) |
+| `--no-fw` | Skip firmware programming |
+| `--no-fpga` | Skip FPGA programming |
+| `--download` | Download the active FPGA image to a file rather than programming |
+
+**Examples**
+
+```bash
+# Program both firmware and FPGA on an X310 at a known address
+uhd_image_loader --args="type=x300,addr=192.168.10.2"
+
+# Program only the FPGA with a custom bitfile
+uhd_image_loader --args="type=x300,addr=192.168.10.2" \
+  --fpga-path /path/to/usrp_x310_fpga_HG.bit \
+  --no-fw
+
+# Program only firmware on a B210
+uhd_image_loader --args="type=b200" \
+  --fw-path /path/to/usrp_b200_fw.hex \
+  --no-fpga
+
+# Program N310 via MPM
+uhd_image_loader --args="type=n3xx,mgmt_addr=192.168.10.2,addr=192.168.10.2"
+
+# Download the current FPGA image from the device to a file
+uhd_image_loader --args="type=x300,addr=192.168.10.2" \
+  --download --out-path ./x310_backup.bit
+```
+
+<Warning>
+Always keep power stable during image programming. If you press Ctrl+C once, the tool will ask you to confirm. Pressing Ctrl+C a second time exits immediately and the device may require recovery via JTAG or the recovery boot mode described in its hardware manual.
+</Warning>
+
+  </Accordion>
+</AccordionGroup>
+
+## RF Self-Calibration
+
+UHD includes three self-calibration utilities that sweep the LO frequency range and compute per-frequency correction tables for IQ imbalance and TX DC offset. Corrections are written as binary `.cal` files to the user's home directory and are automatically applied at runtime whenever the LO is re-tuned.
+
+<Warning>
+**Disconnect all external RF hardware** from the antenna ports before running any calibration utility. The utilities measure transmit leakage into the receive path; external signals will corrupt the calibration.
+</Warning>
+
+The following daughterboards and devices support self-calibration:
+
+<CardGroup cols={2}>
+  <Card title="Supported Daughterboards">
+    RFX Series · WBX Series · SBX Series · CBX Series · UBX Series · OBX Series
+  </Card>
+  <Card title="Supported Motherboards">
+    USRP N320 and other devices using the above daughterboards
+  </Card>
+</CardGroup>
+
+<Note>
+**USRP X420** (1 GHz bandwidth) is **not** supported by the `uhd_cal_*` utilities. Use `uhd_iq_dc_correction.py` for IQ imbalance and DC offset correction on X420.
+</Note>
+
+Calibration data is stored at:
+
+| Platform | Default path |
+|----------|-------------|
+| Linux | `${HOME}/.local/share/uhd/cal/` |
+| Windows | `%LOCALAPPDATA%\uhd\cal\` |
+
+Set `UHD_CAL_DATA_PATH` to override the default directory.
+
+<AccordionGroup>
+  <Accordion title="uhd_cal_rx_iq_balance — RX IQ imbalance calibration">
+
+Sweeps the RX LO across the frontend's frequency range and minimizes the IQ imbalance at each step by searching for the magnitude (`A`) and phase (`B`) correction values that reduce the IQ spur. Results are written to a `.cal` file and applied automatically on subsequent LO tunes.
+
+**Usage**
+
+```bash
+uhd_cal_rx_iq_balance [--verbose] [--args <device-args>] [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Print per-frequency calibration progress |
+| `--args` | Device address args |
+| `--subdev` | Subdevice specification (default: first subdevice, often `A`) |
+| `--freq_start` | Start frequency for the sweep in Hz |
+| `--freq_stop` | Stop frequency for the sweep in Hz |
+| `--freq_step` | LO step size for the sweep in Hz |
+| `--nsamps` | Number of samples per data capture |
+| `--precision` | Target correction precision (default: `0.0001`) |
+
+**Examples**
+
+```bash
+# Calibrate the first available device
+uhd_cal_rx_iq_balance --verbose
+
+# Calibrate a specific device
+uhd_cal_rx_iq_balance --verbose --args="addr=192.168.10.2"
+
+# Restrict calibration to a frequency sub-range
+uhd_cal_rx_iq_balance --verbose \
+  --args="addr=192.168.10.2" \
+  --freq_start=500e6 --freq_stop=2500e6 --freq_step=10e6
+```
+
+  </Accordion>
+
+  <Accordion title="uhd_cal_tx_dc_offset — TX DC offset calibration">
+
+Sweeps the TX LO and finds the DC offset correction value `D'` that minimizes LO leakage for each frequency. The correction is implemented as a single complex adder in the FPGA signal path.
+
+**Usage**
+
+```bash
+uhd_cal_tx_dc_offset [--verbose] [--args <device-args>] [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Print per-frequency calibration progress |
+| `--args` | Device address args |
+| `--subdev` | Subdevice specification |
+| `--freq_start` | Start frequency in Hz |
+| `--freq_stop` | Stop frequency in Hz |
+| `--freq_step` | LO step size in Hz |
+| `--nsamps` | Number of samples per data capture |
+
+**Examples**
+
+```bash
+# Calibrate the first available device
+uhd_cal_tx_dc_offset --verbose
+
+# Calibrate a specific device
+uhd_cal_tx_dc_offset --verbose --args="addr=192.168.10.2"
+```
+
+  </Accordion>
+
+  <Accordion title="uhd_cal_tx_iq_balance — TX IQ imbalance calibration">
+
+Sweeps the TX LO and searches for the magnitude and phase correction values that minimize TX IQ imbalance. The correction is applied in the FPGA using a 2×2 correction matrix.
+
+**Usage**
+
+```bash
+uhd_cal_tx_iq_balance [--verbose] [--args <device-args>] [options]
+```
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Print per-frequency calibration progress |
+| `--args` | Device address args |
+| `--subdev` | Subdevice specification |
+| `--freq_start` | Start frequency in Hz |
+| `--freq_stop` | Stop frequency in Hz |
+| `--freq_step` | LO step size in Hz |
+| `--nsamps` | Number of samples per data capture |
+
+**Examples**
+
+```bash
+# Calibrate the first available device
+uhd_cal_tx_iq_balance --verbose
+
+# Calibrate a specific device
+uhd_cal_tx_iq_balance --verbose --args="addr=192.168.10.2"
+```
+
+  </Accordion>
+</AccordionGroup>
+
+### Running a Full Self-Calibration Sweep
+
+<Steps>
+  <Step title="Disconnect all RF cables">
+    Remove any cables, antennas, or external hardware from every RF port on the USRP. The calibration routines rely on transmit-to-receive self-leakage as the measurement signal.
+  </Step>
+  <Step title="Verify that the daughterboard has a serial number">
+    Calibration files are keyed to the RF board's serial number. If the daughterboard has no serial, burn one first:
+
+    ```bash
+    <install-dir>/lib/uhd/utils/usrp_burn_db_eeprom \
+      --ser=<desired-serial> \
+      --args=<optional-device-args>
+    ```
+  </Step>
+  <Step title="Run all three calibration utilities">
+    Each sweep takes several minutes to complete:
+
+    ```bash
+    uhd_cal_rx_iq_balance --verbose --args=<device-args>
+    uhd_cal_tx_iq_balance --verbose --args=<device-args>
+    uhd_cal_tx_dc_offset  --verbose --args=<device-args>
+    ```
+  </Step>
+  <Step title="Verify calibration files were written">
+    ```bash
+    ls ~/.local/share/uhd/cal/
+    ```
+
+    You should see `.cal` binary files for each calibration type and daughterboard serial.
+  </Step>
+</Steps>
+
+<Tip>
+To ignore a calibration file at runtime without deleting it, add `ignore-cal-file=1` to your device args:
+
+```bash
+tx_waveforms --args="addr=192.168.10.2,ignore-cal-file=1" \
+  --freq=100e6 --rate=1e6
+```
+
+Or in C++:
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make("type=x300,ignore-cal-file=1");
+```
+</Tip>

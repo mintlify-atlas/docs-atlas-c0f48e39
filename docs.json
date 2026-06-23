@@ -1,72 +1,133 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "UHD — USRP Hardware Driver",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#b1b59b",
+    "light": "#2f2b2c",
+    "dark": "#1d4708"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/91552be6-6c26-45d8-b325-68e2dce2322b.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/632d0785-7935-4238-92e9-24a3da18b2d4.png",
+    "dark": "https://media.brand.dev/632d0785-7935-4238-92e9-24a3da18b2d4.png"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/EttusResearch/uhd"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/EttusResearch/uhd"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/binary-install",
+              "installation/build-from-source",
+              "installation/fpga-images"
+            ]
+          },
+          {
+            "group": "USRP Devices",
+            "pages": [
+              "devices/overview",
+              "devices/b-series",
+              "devices/n-series",
+              "devices/x3xx-series",
+              "devices/x4xx-series",
+              "devices/e-series"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Driver Usage",
+        "groups": [
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "driver/identification",
+              "driver/configuration",
+              "driver/streaming",
+              "driver/synchronization"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "driver/multiple-usrp",
+              "driver/timed-commands",
+              "driver/calibration",
+              "driver/gpio",
+              "driver/transport"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "driver/utilities",
+              "driver/logging"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "C++ API",
+            "pages": [
+              "api/multi-usrp",
+              "api/streaming",
+              "api/rfnoc-graph",
+              "api/types"
+            ]
+          },
+          {
+            "group": "Language Bindings",
+            "pages": [
+              "api/python-api",
+              "api/c-api"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "RFNoC",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "rfnoc/introduction",
+              "rfnoc/software-architecture"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "rfnoc/block-development",
+              "rfnoc/image-builder",
+              "rfnoc/modtool"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

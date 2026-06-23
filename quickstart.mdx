@@ -1,47 +1,314 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with UHD"
+sidebarTitle: "Quickstart"
+description: "Install UHD, download FPGA images, connect your USRP, and capture your first RF samples in Python or C++ using the MultiUSRP API in under ten minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through installing UHD, preparing your USRP device, and running a real receive-to-file example using both the Python and C++ APIs. By the end you will have confirmed that UHD can discover your device and stream complex baseband samples to the host.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Install UHD">
+    Choose the installation method that matches your platform and toolchain.
+
+    **Linux (Ubuntu/Debian) — package manager**
+    ```bash
+    sudo apt-get update
+    sudo apt-get install libuhd-dev uhd-host
+    ```
+
+    **Linux (Fedora/RHEL) — package manager**
+    ```bash
+    sudo dnf install uhd uhd-devel
+    ```
+
+    **macOS — Homebrew**
+    ```bash
+    brew install uhd
+    ```
+
+    **Windows** — Download the prebuilt installer from the [Ettus Research files server](http://files.ettus.com/binaries/uhd/) and run it. The installer registers UHD in the system PATH and places the Python bindings in the active Python environment.
+
+    **Build from source** — See the [UHD build guide](http://files.ettus.com/manual/page_build_guide.html) for CMake configuration options and dependency lists on all supported platforms.
+
+    <Note>
+      UHD requires Boost, libusb (for USB devices), and Python 3 with NumPy for the Python bindings. Full dependency lists are in the official build guide.
+    </Note>
+  </Step>
+
+  <Step title="Download FPGA images">
+    USRP devices require FPGA bitfiles that are distributed separately from the UHD driver. After installation, run the bundled downloader to fetch the images that match your installed UHD version:
 
     ```bash
-    npm install your-package
+    sudo uhd_images_downloader
     ```
+
+    The tool downloads only the images for the UHD version you installed and places them in the default image directory (typically `/usr/share/uhd/images/` on Linux). Pass `--help` to see filtering options if you only want images for specific device families.
+
+    <Tip>
+      If your host has no internet access, download the image archive on a connected machine from [files.ettus.com/binaries/uhd_images/](http://files.ettus.com/binaries/uhd_images/) and extract it manually to the images directory.
+    </Tip>
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Connect your device and verify discovery">
+    Connect your USRP to the host:
+
+    - **USB devices (B-Series):** Connect the USB 3.0 cable. No IP configuration is required.
+    - **Ethernet devices (N-Series, X-Series):** Connect the 1 GbE or 10 GbE cable. Set the host interface to a static IP in the same subnet as the device (default device IPs are documented per model in the manual).
+    - **Embedded devices (E-Series):** Access over the USB UART or SSH; UHD is pre-installed on the device.
+
+    Verify that UHD can discover the device:
 
     ```bash
-    your-cli init
+    uhd_find_devices
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+    A successfully connected device prints output similar to:
+
+    ```
+    [INFO] [UHD] linux; GNU C++ version 11.4.0; Boost_107400;
+    --------------------------------------------------
+    -- UHD Device 0
+    --------------------------------------------------
+    Device Address:
+        serial: 3180E2A
+        addr: 192.168.10.2
+        name:
+        type: x300
+    ```
+
+    Once a device is found, inspect its full hardware configuration:
 
     ```bash
-    your-cli start
+    uhd_usrp_probe
     ```
+
+    `uhd_usrp_probe` reports the motherboard type, FPGA image loaded, clock rates, available daughterboards, subdevice specifications, supported sample rates, frequency ranges, and gain ranges. Review this output before configuring your application to understand the actual hardware capabilities.
+
+    <Warning>
+      If `uhd_find_devices` returns no devices, confirm that the FPGA images were downloaded (`uhd_images_downloader`), check firewall rules and network configuration for Ethernet devices, and verify USB permissions for B-Series devices (add a udev rule or run with `sudo` to test).
+    </Warning>
   </Step>
+
+  <Step title="Receive your first samples">
+    With the device discovered, you can stream receive samples to a file using the high-level `MultiUSRP` API. Choose the Python or C++ tab below.
+
+    <Tabs>
+      <Tab title="Python">
+        The UHD Python API exposes `uhd.usrp.MultiUSRP`, which provides a convenience method `recv_num_samps()` that handles streamer creation, stream commands, and teardown in a single call. The example below is adapted directly from the `host/examples/python/rx_to_file.py` source.
+
+        ```python
+        #!/usr/bin/env python3
+        # Receive samples from a USRP and write them to a binary file.
+        # Adapted from host/examples/python/rx_to_file.py
+
+        import numpy as np
+        import uhd
+
+        # --- Parameters ---
+        args       = "addr=192.168.10.2"   # Device address; empty string = first found
+        freq       = 2.45e9                # Center frequency in Hz
+        rate       = 1e6                   # Sample rate in samples/sec
+        gain       = 10                    # RX gain in dB
+        duration   = 5.0                   # Capture duration in seconds
+        channels   = [0]                   # Channel list
+        output_file = "samples.dat"
+
+        # --- Create device ---
+        usrp = uhd.usrp.MultiUSRP(args)
+
+        # --- Receive samples ---
+        num_samps = int(np.ceil(duration * rate))
+        samps = usrp.recv_num_samps(num_samps, freq, rate, channels, gain)
+
+        # --- Save to file ---
+        with open(output_file, "wb") as f:
+            samps.tofile(f)
+
+        print(f"Received {samps.shape[1]} samples, saved to {output_file}")
+        ```
+
+        For more control—such as streaming continuously until a stop condition—use the lower-level streamer API directly. The following pattern is taken from `host/docs/driver_usage/stream.dox`:
+
+        ```python
+        import uhd
+        import numpy as np
+
+        usrp = uhd.usrp.MultiUSRP("addr=192.168.10.2")
+
+        # Configure the streamer: fc32 on the host, sc16 over the wire
+        stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+        rx_streamer = usrp.get_rx_stream(stream_args)
+
+        rx_metadata = uhd.types.RXMetadata()
+        recv_buffer = np.zeros(rx_streamer.get_max_num_samps(), dtype=np.complex64)
+
+        # Issue a continuous stream command
+        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
+        stream_cmd.stream_now = True
+        rx_streamer.issue_stream_cmd(stream_cmd)
+
+        collected = []
+        for _ in range(100):                           # Collect 100 buffers
+            samps = rx_streamer.recv(recv_buffer, rx_metadata)
+            collected.append(recv_buffer[:samps].copy())
+
+        # Stop the stream
+        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+        rx_streamer.issue_stream_cmd(stream_cmd)
+
+        samples = np.concatenate(collected)
+        print(f"Total samples received: {len(samples)}")
+        ```
+
+        Install the Python dependencies with:
+        ```bash
+        pip install numpy
+        # UHD Python bindings are installed with the uhd-host package
+        ```
+      </Tab>
+
+      <Tab title="C++">
+        The C++ `multi_usrp` API is the lowest-latency path and is used by all official UHD example programs. The snippet below follows the pattern from `host/examples/rx_samples_to_file.cpp`.
+
+        ```cpp
+        // Receive samples from a USRP and write them to a binary file.
+        // Adapted from host/examples/rx_samples_to_file.cpp
+        #include <uhd/usrp/multi_usrp.hpp>
+        #include <uhd/types/tune_request.hpp>
+        #include <uhd/utils/safe_main.hpp>
+        #include <complex>
+        #include <fstream>
+        #include <iostream>
+        #include <vector>
+
+        int UHD_SAFE_MAIN(int argc, char* argv[])
+        {
+            // --- Device parameters ---
+            const std::string args   = "addr=192.168.10.2";
+            const double      freq   = 2.45e9;   // Center frequency (Hz)
+            const double      rate   = 1e6;      // Sample rate (sps)
+            const double      gain   = 10.0;     // RX gain (dB)
+            const size_t      n_samps = 1000000; // Samples to capture
+            const std::string file   = "samples.dat";
+
+            // --- Create device ---
+            uhd::usrp::multi_usrp::sptr usrp = uhd::usrp::multi_usrp::make(args);
+            std::cout << "Using Device: " << usrp->get_pp_string() << std::endl;
+
+            // --- Configure radio ---
+            usrp->set_rx_rate(rate);
+            usrp->set_rx_freq(uhd::tune_request_t(freq));
+            usrp->set_rx_gain(gain);
+
+            std::cout << "Actual RX Rate: " << usrp->get_rx_rate() / 1e6
+                      << " Msps" << std::endl;
+
+            // --- Create RX streamer (fc32 host / sc16 wire) ---
+            uhd::stream_args_t stream_args("fc32", "sc16");
+            stream_args.channels = {0};
+            uhd::rx_streamer::sptr rx_stream = usrp->get_rx_stream(stream_args);
+
+            // --- Issue stream command ---
+            uhd::stream_cmd_t stream_cmd(
+                uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+            stream_cmd.num_samps  = n_samps;
+            stream_cmd.stream_now = true;
+            rx_stream->issue_stream_cmd(stream_cmd);
+
+            // --- Receive loop ---
+            const size_t samps_per_buf = rx_stream->get_max_num_samps();
+            std::vector<std::complex<float>> buf(samps_per_buf);
+            uhd::rx_metadata_t md;
+            std::ofstream outfile(file, std::ofstream::binary);
+
+            size_t total = 0;
+            while (total < n_samps) {
+                size_t n = rx_stream->recv(&buf.front(), samps_per_buf, md, 3.0);
+                if (md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
+                    std::cerr << "Receiver error: " << md.strerror() << std::endl;
+                    break;
+                }
+                outfile.write(reinterpret_cast<const char*>(buf.data()),
+                              n * sizeof(std::complex<float>));
+                total += n;
+            }
+
+            outfile.close();
+            std::cout << "Received " << total << " samples, saved to "
+                      << file << std::endl;
+            return EXIT_SUCCESS;
+        }
+        ```
+
+        **Compile against UHD:**
+        ```bash
+        # With pkg-config
+        g++ -std=c++14 rx_example.cpp $(pkg-config --cflags --libs uhd) -o rx_example
+
+        # Or with CMake — add to CMakeLists.txt:
+        # find_package(UHD REQUIRED)
+        # target_link_libraries(rx_example UHD::UHD)
+        ```
+
+        **Run the example:**
+        ```bash
+        ./rx_example
+        # Or use the installed example binary:
+        rx_samples_to_file --args "addr=192.168.10.2" --freq 2.45e9 --rate 1e6 \
+                           --duration 5 --file samples.dat
+        ```
+      </Tab>
+    </Tabs>
+
+    <Note>
+      The `recv_num_samps()` convenience method (Python) and the `recv()` loop pattern (C++) both produce **interleaved complex float32 (fc32)** samples by default. Each sample is a pair of 32-bit IEEE 754 floats representing the in-phase (I) and quadrature (Q) components.
+    </Note>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Verifying Your Capture
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+After running either example, confirm the output file contains valid IQ data:
+
+```python
+import numpy as np
+
+samples = np.fromfile("samples.dat", dtype=np.complex64)
+print(f"Samples loaded : {len(samples)}")
+print(f"Mean power (dB): {10 * np.log10(np.mean(np.abs(samples)**2)):.1f}")
+```
+
+A non-zero mean power value confirms that the USRP was receiving and streaming RF energy. If the power is near `-inf`, check that the antenna is connected, the frequency is within the daughterboard's range, and the gain is set appropriately.
+
+## Useful CLI Tools
+
+UHD ships several command-line utilities that are valuable during development:
+
+| Command | Purpose |
+|---|---|
+| `uhd_find_devices` | Discovers all UHD-compatible devices on the host |
+| `uhd_usrp_probe` | Prints detailed hardware info: FPGA version, subdevices, supported ranges |
+| `uhd_images_downloader` | Downloads FPGA bitfiles matching the installed UHD version |
+| `rx_samples_to_file` | Capture RX samples to disk (see `--help` for all options) |
+| `tx_waveforms` | Transmit a configurable waveform (CONST, SINE, SQUARE, RAMP) |
+
+Run any tool with `--help` to see the full option list and usage examples.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Coding to the API" icon="book-open" href="http://files.ettus.com/manual/page_coding.html">
+    Deep-dive into the Multi-USRP, RFNoC, and C API interfaces with annotated examples and best-practice guidance.
+  </Card>
+  <Card title="Streaming Guide" icon="signal-stream" href="http://files.ettus.com/manual/page_stream.html">
+    Understand stream args, over-the-wire data types, overflow/underrun handling, and remote streaming.
+  </Card>
+  <Card title="Installation Guide" icon="wrench" href="http://files.ettus.com/manual/page_install.html">
+    Full installation instructions for Linux, macOS, and Windows, including pre-built packages and build-from-source steps.
+  </Card>
+  <Card title="Knowledge Base" icon="lightbulb" href="http://kb.ettus.com">
+    Application notes, tutorials, and the technical FAQ maintained by Ettus Research.
+  </Card>
+</CardGroup>

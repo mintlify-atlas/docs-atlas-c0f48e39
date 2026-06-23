@@ -1,0 +1,284 @@
+---
+title: "USRP B2xx Series: USB Software Defined Radio Devices"
+sidebarTitle: "B Series"
+description: "Complete guide to the USRP B200, B210, B200mini, B205mini, and B206mini USB 3.0 software defined radios with integrated RF covering 70 MHz to 6 GHz."
+---
+
+The USRP B2xx Series is the entry-level USRP product line, delivering a full 70 MHz – 6 GHz software defined radio experience over a single USB 3.0 cable. All B Series radios are bus-powered (with a few exceptions noted below), making them the most portable USRPs available. They share a common integrated RF frontend based on the Analog Devices AD936x transceiver family and are supported by UHD 3.8.4 and later.
+
+## Supported Models
+
+<CardGroup cols={2}>
+  <Card title="B200" icon="radio">
+    Single TX/RX channel. Internal GPSDO option available. USB Type-B connector.
+  </Card>
+  <Card title="B210" icon="radio">
+    Two TX/RX channels (2×2 MIMO). MICTOR debug connector. Internal GPSDO option. USB Type-B connector.
+  </Card>
+  <Card title="B200mini" icon="mobile">
+    Compact single-channel version. USB Micro-B SuperSpeed connector.
+  </Card>
+  <Card title="B205mini" icon="mobile">
+    Compact single-channel version with additional industrial-temperature range. USB Micro-B SuperSpeed connector.
+  </Card>
+  <Card title="B206mini" icon="mobile">
+    Latest compact variant. USB Type-C locking connector. Requires UHD 4.9 or above.
+  </Card>
+</CardGroup>
+
+---
+
+## Features
+
+### Hardware Capabilities
+
+- **Frequency range:** 70 MHz – 6 GHz (integrated RF frontend)
+- **LO tuning range:** 50 MHz – 6 GHz
+- **Analog bandwidth:** 200 kHz – 56 MHz (seamlessly adjustable)
+- **Connection:** USB 3.0 (also works on USB 2.0 with reduced throughput)
+- External PPS reference input
+- External 10 MHz reference input
+- Configurable master clock rate (5 MHz – 61.44 MHz single-channel; up to 30.72 MHz dual-channel)
+- GPIO header
+- JTAG connector (B200mini, B205mini, B206mini; not present on B200)
+- Internal GPSDO option (B200 and B210 only)
+- MICTOR debug connector (B210 only)
+
+### FPGA Capabilities
+
+- Timed commands in FPGA
+- Timed sampling in FPGA
+
+### RF Frontend Gains
+
+- **RX gain range:** 76 dB
+- **TX gain range:** 89.8 dB
+
+<Note>
+When a GPSDO module is installed (B200/B210 only) or when using USB 2.0, an external DC power supply or a dual-port USB power cable must be used to supplement bus power.
+</Note>
+
+---
+
+## Getting Started
+
+### Kit Contents
+
+Every B Series kit includes:
+
+- USRP B200 / B210 / B200mini / B205mini / B206mini
+- USB 3.0 cable (connector type varies by model—see below)
+- Universal power supply (B210 only)
+
+<Warning>
+Verify all kit contents immediately upon receipt. If any items are missing, contact your sales agent or Ettus Research Technical Support.
+</Warning>
+
+### USB Connector Reference
+
+| Model | Device-side USB Connector |
+|-------|--------------------------|
+| B200 / B210 | USB Type-B |
+| B200mini / B205mini | USB Micro-B SuperSpeed |
+| B206mini | USB Type-C (locking screw variant) |
+
+### Install UHD
+
+Download and install UHD on your host computer before connecting the device:
+
+- B200, B210, B200mini, B205mini: **UHD 3.8.4 or above**
+- B206mini: **UHD 4.9 or above**
+
+It is generally recommended to use the latest UHD version. See [Installing UHD from Binaries](/installation/binary-install) or [Building UHD from Source](/installation/build-from-source).
+
+### Connect the Device
+
+Plug the included USB 3.0 cable into an available USB 3.0 Type-A port on your host computer. The B Series draws power directly from the USB bus; no additional power connection is needed for most variants.
+
+Once connected, verify operation by running:
+
+```bash
+uhd_find_devices
+uhd_usrp_probe
+```
+
+---
+
+## Connecting in UHD
+
+### C++ Example
+
+```cpp
+#include <uhd/usrp/multi_usrp.hpp>
+#include <iostream>
+
+int main() {
+    // Connect to any detected B200-series device
+    auto usrp = uhd::usrp::multi_usrp::make("type=b200");
+
+    // Set center frequency to 915 MHz
+    usrp->set_rx_freq(915e6);
+
+    // Set sample rate to 1 MS/s
+    usrp->set_rx_rate(1e6);
+
+    // Set gain
+    usrp->set_rx_gain(30.0);
+
+    std::cout << "RX frequency: " << usrp->get_rx_freq() << " Hz\n";
+    std::cout << "RX rate:      " << usrp->get_rx_rate() << " S/s\n";
+    return 0;
+}
+```
+
+### Python Example
+
+```python
+import uhd
+
+# Connect to any detected B200-series device
+usrp = uhd.usrp.MultiUSRP("type=b200")
+
+# Set center frequency
+usrp.set_rx_freq(915e6)
+
+# Set sample rate
+usrp.set_rx_rate(1e6)
+
+# Set gain
+usrp.set_rx_gain(30.0)
+
+print(f"RX frequency: {usrp.get_rx_freq():.0f} Hz")
+print(f"RX rate:      {usrp.get_rx_rate():.0f} S/s")
+```
+
+---
+
+## Master Clock Rate
+
+The master clock rate feeds the RF frontends and DSP chains. It can be set between **5 MHz and 61.44 MHz** (single-channel) or up to **30.72 MHz** in dual-channel mode. Rates above 56 MHz are possible but not recommended.
+
+### Setting the Clock Rate
+
+```bash
+# Via command-line argument
+uhd_usrp_probe --args="master_clock_rate=52e6"
+```
+
+```python
+import uhd
+
+usrp = uhd.usrp.MultiUSRP("type=b200")
+
+# Explicit clock rate (locks auto-selection)
+usrp.set_master_clock_rate(16e6)
+
+# Or use the property tree directly
+usrp.get_tree().access_double('/mboards/0/tick_rate').set(16e6)
+```
+
+### Automatic Clock Rate Selection
+
+By default, UHD automatically chooses the largest valid master clock rate for the requested sample rate, maximizing the number of half-band filter stages available. Manual selection can be re-enabled after automatic mode:
+
+```python
+import uhd
+
+usrp = uhd.usrp.MultiUSRP("type=b200")
+
+# Check auto mode status
+print(usrp.get_tree().access_bool('/mboards/0/auto_tick_rate').get())  # True
+
+# Lock to explicit rate (disables auto)
+usrp.set_master_clock_rate(16e6)
+
+# Re-enable auto
+usrp.get_tree().access_bool('/mboards/0/auto_tick_rate').set(True)
+usrp.set_rx_rate(7e6)  # UHD now picks an appropriate MCR automatically
+print(usrp.get_master_clock_rate())  # e.g., 56000000.0
+```
+
+<Warning>
+Changing the master clock rate reconfigures the entire clocking chain and invalidates any previous time synchronization. When synchronizing multiple B200 units, always specify a `master_clock_rate` explicitly rather than relying on auto selection.
+</Warning>
+
+---
+
+## Key Device Arguments
+
+| Argument | Description | Example |
+|----------|-------------|---------|
+| `type` | Select B200 family | `type=b200` |
+| `master_clock_rate` | Set master clock at init | `master_clock_rate=52e6` |
+| `fpga` | Override FPGA image path | `fpga=usrp_b200_fpga.bin` |
+| `fw` | Override firmware image path | `fw=usrp_b200_fw.hex` |
+| `recv_frame_size` | Tune USB transfer frame size | `recv_frame_size=1024` |
+| `enable_user_regs` | Enable access to custom FPGA user registers | `enable_user_regs` |
+
+---
+
+## Custom FPGA Images
+
+The B Series FPGA source is open and can be modified and rebuilt for custom DSP pipelines. To control user-defined IP via UHD, set `USER_SETTINGS=1` in `b200_core.v` (for B200/B210) or `b205_core.v` (for mini variants), then use the `enable_user_regs` device argument:
+
+```cpp
+auto usrp = uhd::usrp::multi_usrp::make("type=b200,enable_user_regs");
+auto user_regs = usrp->get_user_settings_iface();
+user_regs->poke32(addr, data);
+```
+
+---
+
+## Front Panel LEDs
+
+<Tabs>
+  <Tab title="B200 / B210">
+    | LED ID | Description | States |
+    |--------|-------------|--------|
+    | LED600 | Power indicator | Off / Blue (USB power) / Red (external power) |
+    | LED800 | Channel 2 RX2 activity | Off / Green (receiving) |
+    | LED801 | Channel 2 TX/RX activity | Off / Green (RX) / Red (TX) / Orange (switching) |
+    | LED802 | Channel 1 TX/RX activity | Off / Green (RX) / Red (TX) / Orange (switching) |
+    | LED803 | Channel 1 RX2 activity | Off / Green (receiving) |
+    | LED100 | GPS lock indicator | Off (no lock) / Green (locked) |
+  </Tab>
+  <Tab title="B200mini / B205mini / B206mini">
+    | LED ID | Description | States |
+    |--------|-------------|--------|
+    | PWR LED | Power indicator | Off (no power) / On (power applied) |
+    | TRX LED | TX/RX activity | Off / Green (RX) / Red (TX) / Orange (switching) |
+    | RX2 LED | RX2 activity | Off / Green (receiving) |
+    | S0 LED | Reference lock | Off / Green (locked) |
+    | S1 LED | Reference present | Off / Green (reference level high) |
+  </Tab>
+</Tabs>
+
+---
+
+## Care and Handling
+
+<Warning>
+Observe these precautions to avoid damage:
+
+- Never apply more than **-15 dBm** of power into any RF input.
+- Always use at least **30 dB attenuation** when operating in a loopback configuration.
+- Never allow metal objects to touch the circuit board while powered.
+- Always terminate the TX port with an antenna or a 50 Ω load.
+</Warning>
+
+---
+
+## Known Issues
+
+- When synchronizing multiple B Series devices in time, always specify an explicit `master_clock_rate` instead of relying on automatic selection.
+- The B200 and B210 cannot use an external 10 MHz reference if a GPSDO is installed. Remove the GPSDO physically before using an external reference.
+- If streaming stability issues occur, try setting `recv_frame_size=1024` in the device args.
+
+---
+
+## Additional Resources
+
+- [B200/B210/B200mini/B205mini/B206mini Motherboard Resources](https://kb.ettus.com/B200/B210/B200mini/B205mini/B206mini)
+- [RF Specifications](https://kb.ettus.com/B200/B210/B200mini/B205mini#RF_Specifications)
+- [Verifying USRP Operation with UHD and GNU Radio](https://kb.ettus.com/Verifying_the_Operation_of_the_USRP_Using_UHD_and_GNU_Radio)
+- [RF Calibration Guide](/driver/calibration)

@@ -1,0 +1,261 @@
+---
+title: "RFNoC Image Builder: Assembling FPGA Images"
+sidebarTitle: "Image Builder"
+description: "Use RFNoC Image Builder to generate synthesizable Verilog and build FPGA bitfiles from a YAML description of blocks, connections, and clocks."
+---
+
+RFNoC Image Builder is the tool that turns a high-level YAML description of your FPGA design into a complete, synthesizable Verilog design and optionally drives the Xilinx Vivado build all the way to a bitfile. You provide a list of NoC blocks, stream endpoints, static connections, and clock domains; Image Builder instantiates the requested blocks, wires them together through the CHDR and control crossbars, and integrates everything with the USRP board support package (BSP).
+
+## What Image Builder Does
+
+Given a YAML configuration file, Image Builder performs the following steps automatically:
+
+1. Reads the block descriptor files (`.yml`) for each requested NoC block.
+2. Instantiates a CHDR Crossbar with enough ports for all transport adapters and stream endpoints.
+3. Instantiates the requested stream endpoints and connects them to the crossbar.
+4. Instantiates a Control Crossbar and connects all block control ports.
+5. Generates a Static Router from the declared `connections` list.
+6. Produces a synthesizable Verilog top-level and a Makefile that targets the specified USRP device.
+7. Optionally invokes Vivado to synthesize, implement, and generate a bitstream.
+
+The output is placed in a build directory and can be re-synthesized at any time without re-running Image Builder.
+
+## CLI Reference
+
+```bash
+rfnoc_image_builder -y <image_config.yml> -F <fpga_source_dir> -t <target>
+```
+
+Key flags:
+
+| Flag | Description |
+|------|-------------|
+| `-y`, `--yaml-config` | Path to the image configuration YAML file |
+| `-r`, `--grc-config` | Generate image from a GNU Radio Companion `.grc` file instead |
+| `-F`, `--fpga-dir` | Path to the FPGA source tree (defaults to current repo) |
+| `-t`, `--target` | Build target, e.g. `X310_HG`, `N320_XG`, `X410`, `X440` |
+| `-G`, `--generate-only` | Generate Verilog but do not invoke Vivado |
+| `-I`, `--include-dir` | Path to an out-of-tree module directory (repeatable) |
+| `-B`, `--build-dir` | Output directory for generated image core files |
+| `-d`, `--device` | Target device if not specified in the YAML |
+| `-g`, `--GUI` | Open Vivado GUI during the build |
+| `-j`, `--jobs` | Number of parallel Vivado jobs |
+| `-c`, `--clean-all` | Clean IP before building |
+| `-p`, `--vivado-path` | Override the default Vivado installation path |
+
+### Valid Targets
+
+Image Builder validates the `--target` argument against the known list:
+
+| Device | Available Targets |
+|--------|-------------------|
+| X300 / X310 | `X310_1G`, `X310_HG`, `X310_XG`, `X310_HA`, `X310_XA` |
+| N300 / N310 | `N310_WX`, `N310_HG`, `N310_XG`, `N310_HA`, `N310_XA`, `N310_AA` |
+| N320 | `N320_WX`, `N320_HG`, `N320_XG`, `N320_XQ`, `N320_AQ`, `N320_AA` |
+| E310 | `E310_SG1`, `E310_SG3` |
+| E320 | `E320_1G`, `E320_XG`, `E320_AA` |
+| X410 | `X410` |
+| X440 | `X440` |
+
+## Image Configuration YAML Format
+
+The YAML file is the single input that completely describes your custom FPGA image. It is validated against the `rfnoc_imagebuilder_args` schema.
+
+### Minimal Working Example
+
+```yaml
+schema: rfnoc_imagebuilder_args
+version: "1.0"
+rfnoc_version: "1.0"
+chdr_width: 64            # Must match all blocks in this image
+device: 'x310'
+default_target: 'X310_HG'
+
+stream_endpoints:
+  ep0:
+    ctrl: True
+    data: True
+    num_data_i: 1
+    num_data_o: 1
+    buff_size: 32768
+
+noc_blocks:
+  radio0:
+    block_desc: 'radio.yml'
+  ddc0:
+    block_desc: 'ddc.yml'
+
+connections:
+  - {srcblk: radio0, srcport: out_0, dstblk: ddc0,  dstport: in_0}
+  - {srcblk: ddc0,   srcport: out_0, dstblk: ep0,   dstport: in0 }
+  - {srcblk: ep0,    srcport: out0,  dstblk: radio0, dstport: in_0}
+```
+
+### Full YAML Field Reference
+
+<CodeGroup>
+  ```yaml General Section
+  schema: rfnoc_imagebuilder_args   # Required: schema identifier
+  version: "1.0"                    # File format version
+  rfnoc_version: "1.0"              # RFNoC protocol version
+  chdr_width: 64                    # CHDR bus width: 64, 128, or 256
+  device: 'x310'                    # Target device (or pass with -d on CLI)
+  default_target: 'X310_HG'        # Default Vivado build target
+  ```
+
+  ```yaml Stream Endpoints
+  stream_endpoints:
+    ep0:
+      ctrl: True          # Endpoint handles control traffic (usually True)
+      data: True          # Endpoint handles data traffic
+      num_data_i: 1       # Number of data input ports
+      num_data_o: 2       # Number of data output ports
+      buff_size: 32768    # Ingress buffer size in bytes (power of 2)
+    ep1:
+      ctrl: False
+      data: True
+      num_data_i: 1
+      num_data_o: 1
+      buff_size: 32768
+  ```
+
+  ```yaml NoC Blocks
+  noc_blocks:
+    radio0:
+      block_desc: 'radio.yml'      # Path to the block descriptor YAML
+    ddc0:
+      block_desc: 'ddc.yml'
+    my_block:
+      block_desc: 'my_block.yml'
+      parameters:                  # Override HDL generics at build time
+        NUM_CHANNELS: 4
+        FIFO_DEPTH: 256
+  ```
+
+  ```yaml Connections
+  connections:
+    # Block-to-block data connection
+    - {srcblk: radio0, srcport: out_0, dstblk: ddc0, dstport: in_0}
+    # Block-to-stream-endpoint
+    - {srcblk: ddc0,   srcport: out_0, dstblk: ep0,  dstport: in0}
+    # Stream-endpoint-to-block
+    - {srcblk: ep0,    srcport: out0,  dstblk: duc0, dstport: in_0}
+    # IO port connection (hardware timestamp)
+    - {srcblk: _device_, srcport: time, dstblk: my_block, dstport: time}
+  ```
+
+  ```yaml Clock Domains
+  clk_domains:
+    # Connect the device radio clock to a user block's compute clock
+    - {srcblk: _device_, srcport: radio, dstblk: my_block, dstport: user0}
+    # Connect the device ce clock to another block
+    - {srcblk: _device_, srcport: ce,    dstblk: fft0,     dstport: ce}
+  ```
+</CodeGroup>
+
+<Note>
+  The special block name `_device_` refers to the USRP device itself and is used to connect IO ports (like the hardware timestamp) and device clocks to NoC blocks. It cannot be used as a `dstblk` in data connections.
+</Note>
+
+### Connection Rules
+
+- `srcblk` and `dstblk` must be either the name of a stream endpoint, the name of a NoC block, or `_device_`.
+- `srcport` and `dstport` are the port names as defined in the block descriptor YAML files.
+- Stream endpoints use port names `in0`, `in1`, … (for input from a block) and `out0`, `out1`, … (for output to a block).
+- A single source port can only be connected to a single destination port in the static router.
+
+## Building a Custom FPGA Image
+
+<Steps>
+  <Step title="Prepare block descriptors">
+    Ensure the `.yml` descriptor file for every custom block is accessible. In-tree blocks (Radio, DDC, DUC, FFT, Replay, …) are already bundled with UHD. For out-of-tree (OOT) blocks, pass their directory with `-I`.
+
+    ```bash
+    # OOT block layout
+    my_oot_module/
+    ├── rfnoc/
+    │   └── blocks/
+    │       └── my_block.yml      # block descriptor
+    └── fpga/
+        └── rfnoc_block_my_block/ # HDL sources
+    ```
+  </Step>
+
+  <Step title="Write the image configuration YAML">
+    Create a YAML file listing your blocks, stream endpoints, connections, and clock domains. Choose a `chdr_width` that matches all blocks (64-bit for X3xx/N3xx, 256-bit for X4xx).
+  </Step>
+
+  <Step title="Generate and inspect the Verilog">
+    Run Image Builder with `--generate-only` first to inspect the generated files without kicking off a Vivado build:
+
+    ```bash
+    rfnoc_image_builder \
+      -y my_image.yml \
+      -F /path/to/uhd/fpga \
+      -t X310_HG \
+      -I /path/to/my_oot_module \
+      --generate-only \
+      -B build_output/
+    ```
+  </Step>
+
+  <Step title="Build the bitfile">
+    Drop `--generate-only` to synthesize and implement the design. Use `-j N` to parallelize Vivado jobs:
+
+    ```bash
+    rfnoc_image_builder \
+      -y my_image.yml \
+      -F /path/to/uhd/fpga \
+      -t X310_HG \
+      -I /path/to/my_oot_module \
+      -j 4
+    ```
+
+    The final `.bit` file will appear in `build_output/` (or the directory specified with `--build-output-dir`).
+  </Step>
+
+  <Step title="Flash and test">
+    Program the bitfile onto the USRP with `uhd_image_loader`:
+
+    ```bash
+    uhd_image_loader --args="type=x300,addr=192.168.10.2" \
+                     --fpga-path=my_image.bit
+    ```
+
+    Then verify that UHD discovers your blocks:
+
+    ```bash
+    uhd_usrp_probe --args="addr=192.168.10.2"
+    ```
+  </Step>
+</Steps>
+
+## Tips and Common Pitfalls
+
+<Tip>
+  Use `--generate-only` during development to iterate on the YAML topology without waiting for Vivado synthesis. You can inspect the generated `rfnoc_image_core.sv` to understand how blocks are wired.
+</Tip>
+
+<Note>
+  The `chdr_width` in the image YAML must match the `chdr_width` specified in every block's YAML descriptor. Mixing CHDR widths in a single image will cause an error during generation.
+</Note>
+
+<Note>
+  If an out-of-tree block requires special Vivado IP (e.g., a Xilinx FFT core), include the IP's `.xci` files in the block's `Makefile.srcs` and reference that makefile in the block descriptor's `fpga_includes` section. Image Builder will include those sources in the Vivado project automatically.
+</Note>
+
+## Generated File Structure
+
+After running Image Builder, the build directory typically contains:
+
+```
+build_output/
+├── rfnoc_image_core.sv          # Top-level generated Verilog
+├── rfnoc_image_core.vh          # Generated header with parameters
+├── Makefile                     # Vivado build Makefile
+├── ip/                          # Generated Xilinx IP files
+└── build/                       # Vivado project and output artifacts
+    └── X310_HG.bit              # Final bitfile (after full build)
+```
+
+The `rfnoc_image_core.sv` is the synthesizable top-level that instantiates all the blocks you declared, wires the CHDR and control crossbars, and connects everything to the device BSP.

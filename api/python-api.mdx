@@ -1,0 +1,390 @@
+---
+title: "UHD Python API: MultiUSRP and Type Bindings"
+sidebarTitle: "Python API"
+description: "Install and use the UHD Python API to control USRP hardware with MultiUSRP, StreamArgs, RXMetadata, TXMetadata, and convenience recv/send helpers."
+---
+
+UHD provides a Python API that closely mirrors the C++ `multi_usrp` interface. The bindings are generated with [PyBind11](https://github.com/pybind/pybind11) and expose all major hardware-control functions under PEP 8–compatible names. The Python API is particularly convenient for interactive work, rapid prototyping, post-processing scripts, and Jupyter Notebook environments.
+
+<Note>
+The Python API mirrors the C++ API in both behavior and semantics. The C++ reference documentation applies directly — simply convert `snake_case` C++ names to `CamelCase` class names as described below.
+</Note>
+
+---
+
+## Installation
+
+<Tabs>
+  <Tab title="From Source (CMake)">
+    Enable `ENABLE_PYTHON_API` when configuring UHD from source:
+
+    ```bash
+    cmake -DENABLE_PYTHON_API=ON \
+          -DPYTHON_INCLUDE_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))") \
+          ..
+    make -j$(nproc)
+    sudo make install
+    ```
+
+    Python header files are required. Install them with:
+
+    ```bash
+    # Debian/Ubuntu
+    sudo apt install python3-dev
+
+    # Fedora/RHEL
+    sudo dnf install python3-devel
+    ```
+  </Tab>
+  <Tab title="PyPI / pip">
+    Pre-built wheels are available on PyPI for common platforms:
+
+    ```bash
+    pip install uhd
+    ```
+
+    <Note>
+    PyPI wheels may lag behind the latest UHD release. For the newest features or device support, build from source.
+    </Note>
+  </Tab>
+  <Tab title="Windows">
+    On Windows, UHD is built as a binary wheel using Poetry:
+
+    ```powershell
+    cd <build_directory>\python
+    python -m poetry install
+    ```
+
+    Alternatively, install the wheel directly:
+
+    ```powershell
+    python -m pip install <build_directory>\python\dist\uhd-4.x.x-cp3xx-cp3xx-win_amd64.whl
+    ```
+
+    If you see the following error on Python 3.8+:
+
+    ```
+    ImportError: DLL load failed while importing libpyuhd: The specified module could not be found.
+    ```
+
+    Add the directory containing `uhd.dll` to the DLL search path before importing:
+
+    ```python
+    import os
+    os.add_dll_directory(r"C:\Program Files\UHD\bin")
+    import uhd
+    ```
+
+    If UHD was built with USB support, also add the path to `libusb-1.0.dll`.
+  </Tab>
+</Tabs>
+
+<Note>
+Python 2 is not supported. UHD 4.0.0 and later require Python 3.
+</Note>
+
+---
+
+## Naming Conventions
+
+Python API names follow PEP 8. The mapping from C++ to Python is consistent:
+
+| C++ | Python |
+|---|---|
+| `uhd::usrp::multi_usrp` | `uhd.usrp.MultiUSRP` |
+| `uhd::stream_args_t` | `uhd.usrp.StreamArgs` |
+| `uhd::rx_metadata_t` | `uhd.types.RXMetadata` |
+| `uhd::tx_metadata_t` | `uhd.types.TXMetadata` |
+| `uhd::stream_cmd_t` | `uhd.types.StreamCMD` |
+| `uhd::stream_cmd_t::stream_mode_t` | `uhd.types.StreamMode` |
+| `uhd::time_spec_t` | `uhd.types.TimeSpec` |
+| `uhd::tune_request_t` | `uhd.types.TuneRequest` |
+
+Method names remain `snake_case` (e.g., `set_rx_freq`, `get_rx_gain`) and are identical to their C++ counterparts.
+
+---
+
+## uhd.usrp.MultiUSRP
+
+The central class for hardware control. Wraps `uhd::usrp::multi_usrp`.
+
+```python
+import uhd
+
+# Open device (empty string = auto-detect)
+usrp = uhd.usrp.MultiUSRP("")
+
+# Target a specific device
+usrp = uhd.usrp.MultiUSRP("type=b200")
+usrp = uhd.usrp.MultiUSRP("addr=192.168.10.2")
+```
+
+All configuration methods from C++ are available with identical signatures:
+
+```python
+usrp.set_rx_rate(1e6)
+usrp.set_rx_freq(uhd.types.TuneRequest(2.4e9), 0)
+usrp.set_rx_gain(40.0, 0)
+usrp.set_rx_bandwidth(1e6, 0)
+usrp.set_clock_source("internal")
+usrp.set_time_source("internal")
+
+actual_freq = usrp.get_rx_freq(0)
+actual_gain = usrp.get_rx_gain(0)
+```
+
+---
+
+## uhd.usrp.StreamArgs
+
+```python
+import uhd
+
+# Create stream args (cpu_format, otw_format)
+stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+stream_args.channels = [0]
+stream_args.args     = ""          # optional key=val string
+
+rx_stream = usrp.get_rx_stream(stream_args)
+tx_stream = usrp.get_tx_stream(stream_args)
+```
+
+---
+
+## uhd.types.RXMetadata
+
+Returned by `rx_stream.recv()`. Provides timing, error, and burst information.
+
+```python
+md = uhd.types.RXMetadata()
+
+# After recv():
+if md.error_code != uhd.types.RXMetadataErrorCode.none:
+    print("RX error:", md.strerror())
+
+if md.has_time_spec:
+    print("Sample timestamp:", md.time_spec.get_real_secs(), "s")
+```
+
+### RX Error Codes
+
+| Python Enum | Description |
+|---|---|
+| `RXMetadataErrorCode.none` | No error |
+| `RXMetadataErrorCode.timeout` | No data received within timeout |
+| `RXMetadataErrorCode.late_command` | Command issued in the past |
+| `RXMetadataErrorCode.broken_chain` | Expected follow-on command missing |
+| `RXMetadataErrorCode.overflow` | FIFO overflowed or packet dropped |
+| `RXMetadataErrorCode.alignment` | Multi-channel time alignment failed |
+| `RXMetadataErrorCode.bad_packet` | Received packet could not be parsed |
+
+---
+
+## uhd.types.TXMetadata
+
+Passed to `tx_stream.send()`.
+
+```python
+md = uhd.types.TXMetadata()
+md.has_time_spec  = False
+md.start_of_burst = True
+md.end_of_burst   = True
+```
+
+---
+
+## uhd.types.StreamCMD and StreamMode
+
+Used to start and stop reception.
+
+```python
+import uhd
+
+# Start continuous streaming
+stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
+stream_cmd.stream_now = True
+rx_stream.issue_stream_cmd(stream_cmd)
+
+# Stop
+stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+rx_stream.issue_stream_cmd(stop_cmd)
+
+# Fixed number of samples, timed start
+timed_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
+timed_cmd.num_samps  = 10000
+timed_cmd.stream_now = False
+timed_cmd.time_spec  = uhd.types.TimeSpec(2.0)
+rx_stream.issue_stream_cmd(timed_cmd)
+```
+
+| Python Enum | C++ Equivalent | Description |
+|---|---|---|
+| `StreamMode.start_cont` | `STREAM_MODE_START_CONTINUOUS` | Stream indefinitely |
+| `StreamMode.stop_cont` | `STREAM_MODE_STOP_CONTINUOUS` | Stop continuous stream |
+| `StreamMode.num_done` | `STREAM_MODE_NUM_SAMPS_AND_DONE` | Stream N samples and stop |
+| `StreamMode.num_more` | `STREAM_MODE_NUM_SAMPS_AND_MORE` | Stream N samples, expect more |
+
+---
+
+## Convenience Methods (Python-only)
+
+These helper methods are not available in the C++ API and are unique to the Python bindings. They are optimized for one-shot data acquisition and transmission.
+
+### `recv_num_samps()`
+
+Receive a fixed number of samples and return a NumPy array.
+
+```python
+import uhd
+import numpy as np
+
+usrp = uhd.usrp.MultiUSRP("type=b200")
+
+samps = usrp.recv_num_samps(
+    num_samps  = int(1e6),   # 1M samples
+    freq       = 2.4e9,      # 2.4 GHz
+    rate       = 1e6,        # 1 Msps
+    channels   = [0],        # channel 0
+    gain       = 40,         # 40 dB
+)
+# samps is a numpy array of shape (1, 1_000_000) with dtype complex64
+samps.tofile("iq_samples.dat")
+```
+
+### `send_waveform()`
+
+Transmit a pre-built NumPy array as a single burst.
+
+```python
+import uhd
+import numpy as np
+
+usrp = uhd.usrp.MultiUSRP("type=b200")
+
+# Build a 100 kHz tone
+rate = 1e6
+N    = int(rate)
+t    = np.arange(N) / rate
+waveform = np.exp(1j * 2 * np.pi * 100e3 * t).astype(np.complex64)
+
+usrp.send_waveform(
+    waveform   = waveform,
+    duration   = 1.0,      # transmit for 1 second
+    freq       = 915e6,
+    rate       = rate,
+    channels   = [0],
+    gain       = 60,
+)
+```
+
+---
+
+## Full RX Streaming Example
+
+```python
+import uhd
+import numpy as np
+
+def main():
+    # 1. Open device and configure
+    usrp = uhd.usrp.MultiUSRP("type=b200")
+    usrp.set_rx_rate(1e6)
+    usrp.set_rx_freq(uhd.types.TuneRequest(915e6), 0)
+    usrp.set_rx_gain(40, 0)
+    usrp.set_rx_bandwidth(1e6, 0)
+
+    # 2. Create streamer
+    st_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    st_args.channels = [0]
+    rx_stream = usrp.get_rx_stream(st_args)
+
+    # 3. Allocate buffer and issue stream command
+    max_samps = rx_stream.get_max_num_samps()
+    buf = np.zeros(max_samps, dtype=np.complex64)
+    metadata = uhd.types.RXMetadata()
+
+    cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
+    cmd.stream_now = True
+    rx_stream.issue_stream_cmd(cmd)
+
+    # 4. Receive loop
+    received = []
+    for _ in range(100):
+        n = rx_stream.recv(buf, metadata)
+        if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
+            print("Error:", metadata.strerror())
+            break
+        received.append(buf[:n].copy())
+
+    # 5. Stop streaming
+    stop = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+    rx_stream.issue_stream_cmd(stop)
+
+    samples = np.concatenate(received)
+    print(f"Total samples received: {len(samples)}")
+    return samples
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Full TX Streaming Example
+
+```python
+import uhd
+import numpy as np
+
+def transmit_tone(freq_hz=915e6, tone_offset=100e3, rate=1e6, gain=60, duration=5.0):
+    usrp = uhd.usrp.MultiUSRP("type=b200")
+    usrp.set_tx_rate(rate)
+    usrp.set_tx_freq(uhd.types.TuneRequest(freq_hz), 0)
+    usrp.set_tx_gain(gain, 0)
+
+    st_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    st_args.channels = [0]
+    tx_stream = usrp.get_tx_stream(st_args)
+
+    # Build one period of a tone
+    max_samps = tx_stream.get_max_num_samps()
+    t = np.arange(max_samps) / rate
+    buf = np.exp(1j * 2 * np.pi * tone_offset * t).astype(np.complex64)
+
+    # Send in a loop
+    metadata = uhd.types.TXMetadata()
+    metadata.start_of_burst = True
+    metadata.end_of_burst   = False
+    metadata.has_time_spec  = False
+
+    import time
+    end_time = time.time() + duration
+    while time.time() < end_time:
+        tx_stream.send(buf, metadata)
+        metadata.start_of_burst = False
+
+    # End-of-burst marker
+    eob_md = uhd.types.TXMetadata()
+    eob_md.end_of_burst = True
+    tx_stream.send(np.zeros(1, dtype=np.complex64), eob_md)
+
+if __name__ == "__main__":
+    transmit_tone()
+```
+
+---
+
+## Thread Safety and the GIL
+
+The following UHD Python API functions release the Python Global Interpreter Lock (GIL) during their execution for performance:
+
+- `rx_streamer.recv()`
+- `tx_streamer.send()`
+- `tx_streamer.recv_async_msg()`
+- `uhd.find()`
+
+<Warning>
+Because these functions access Python objects (NumPy buffers) without holding the GIL, you must ensure that no other Python thread accesses those buffers concurrently. In multi-threaded applications, use a `threading.Lock` or other synchronization primitive to protect shared buffers.
+</Warning>
+
+In single-threaded applications, no additional synchronization is required.

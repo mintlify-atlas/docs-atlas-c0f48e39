@@ -1,0 +1,347 @@
+---
+title: "UHD Core Types: tune_request_t, time_spec_t, and More"
+sidebarTitle: "Types"
+description: "Reference for UHD's fundamental data types: tune_request_t, time_spec_t, device_addr_t, sensor_value_t, meta_range_t, and the frequency policy enum."
+---
+
+UHD defines a set of portable, clock-domain-agnostic types used throughout the API for specifying frequencies, times, address strings, sensor readings, and value ranges. Understanding these types is essential for writing correct tuning, timing, and configuration code.
+
+---
+
+## tune_request_t
+
+`tune_request_t` instructs the driver how to tune the full RF chain. It separates control of the hardware LO (RF frequency) from the DSP NCO (DSP frequency), allowing precise placement of the signal relative to the LO — for example, to move the LO offset and eliminate DC bias at the center of the spectrum.
+
+```cpp
+#include <uhd/types/tune_request.hpp>
+
+struct tune_request_t {
+    double    target_freq;       // desired center frequency in Hz
+    policy_t  rf_freq_policy;    // AUTO, MANUAL, or NONE
+    double    rf_freq;           // RF LO frequency (used when MANUAL)
+    policy_t  dsp_freq_policy;   // AUTO, MANUAL, or NONE
+    double    dsp_freq;          // DSP NCO frequency (used when MANUAL)
+    device_addr_t args;          // optional key/value tuning args
+};
+```
+
+### Constructors
+
+```cpp
+// Auto-tune to target_freq (most common)
+tune_request_t(double target_freq = 0);
+
+// Manual RF LO offset + auto DSP
+tune_request_t(double target_freq, double lo_off);
+```
+
+### Frequency Policies
+
+```cpp
+enum policy_t {
+    POLICY_NONE   = 'N', // do not change this element
+    POLICY_AUTO   = 'A', // driver chooses automatically
+    POLICY_MANUAL = 'M'  // use the value in rf_freq / dsp_freq
+};
+```
+
+<ParamField path="POLICY_AUTO" type="policy_t">
+  The driver places the LO and DSP offset automatically. For `rf_freq_policy = AUTO`, the RF LO is placed at `target_freq + default_LO_offset`. For `dsp_freq_policy = AUTO`, the DSP offset makes up the difference.
+</ParamField>
+
+<ParamField path="POLICY_MANUAL" type="policy_t">
+  Use the explicitly provided `rf_freq` or `dsp_freq` value. Set `rf_freq_policy = POLICY_MANUAL` and assign `rf_freq` to pin the LO to a specific frequency.
+</ParamField>
+
+<ParamField path="POLICY_NONE" type="policy_t">
+  Do not change this element of the chain. Useful for updating only the DSP offset without moving the hardware LO.
+</ParamField>
+
+### DSP Frequency Sign Convention
+
+The relationship between the three frequencies is:
+
+```
+target_freq = rf_freq + sign × dsp_freq
+```
+
+where `sign = +1` for RX and `sign = -1` for TX. Setting `rf_freq = 1 GHz` and `dsp_freq = 10 MHz` gives a target of **1010 MHz** for RX and **990 MHz** for TX.
+
+### Usage Examples
+
+```cpp
+// Simple: auto-tune to 915 MHz
+usrp->set_rx_freq(uhd::tune_request_t(915e6), 0);
+
+// LO offset: place LO 10 MHz above target to avoid DC spike
+usrp->set_rx_freq(uhd::tune_request_t(2.4e9, 10e6), 0);
+
+// Fully manual: fix LO at 900 MHz, let DSP handle the rest
+uhd::tune_request_t tr(915e6);
+tr.rf_freq_policy  = uhd::tune_request_t::POLICY_MANUAL;
+tr.rf_freq         = 900e6;
+tr.dsp_freq_policy = uhd::tune_request_t::POLICY_AUTO;
+usrp->set_rx_freq(tr, 0);
+
+// Use integer-N PLL mode for reduced spurs
+uhd::tune_request_t tr2(1.5e9);
+tr2.args["mode_n"] = "integer";
+usrp->set_rx_freq(tr2, 0);
+```
+
+---
+
+## time_spec_t
+
+`time_spec_t` represents a point in time as a 64-bit integer seconds part plus a double-precision fractional seconds part. It provides sub-nanosecond precision without accumulated floating-point error over long intervals.
+
+```cpp
+#include <uhd/types/time_spec.hpp>
+
+class time_spec_t {
+public:
+    static constexpr double ASAP = 0.0;  // immediate execution sentinel
+
+    time_spec_t(double secs = 0);
+    time_spec_t(int64_t full_secs, double frac_secs = 0);
+    time_spec_t(int64_t full_secs, long tick_count, double tick_rate);
+
+    static time_spec_t from_ticks(long long ticks, double tick_rate);
+
+    int64_t get_full_secs()  const;
+    double  get_frac_secs()  const;
+    double  get_real_secs()  const;
+    long    get_tick_count(double tick_rate) const;
+    long long to_ticks(double tick_rate)     const;
+};
+```
+
+### Constructors
+
+<ParamField path="time_spec_t(double secs)" type="constructor">
+  Constructs from a real-valued seconds count. Convenient but may lose precision for absolute times beyond a few tens of years.
+</ParamField>
+
+<ParamField path="time_spec_t(int64_t full_secs, double frac_secs)" type="constructor">
+  Constructs from an integer seconds part and a fractional seconds part `[0.0, 1.0)`. Preferred for absolute timestamps where precision matters.
+</ParamField>
+
+<ParamField path="time_spec_t(int64_t full_secs, long tick_count, double tick_rate)" type="constructor">
+  Constructs from a tick count within a given second, at the specified clock rate. Useful when working in clock-domain units.
+</ParamField>
+
+### Static Factory
+
+```cpp
+// Convert 64-bit tick count at tick_rate Hz to a time_spec_t
+time_spec_t ts = uhd::time_spec_t::from_ticks(1234567890LL, 200e6);
+```
+
+### Accessors
+
+| Method | Return Type | Description |
+|---|---|---|
+| `get_full_secs()` | `int64_t` | Whole seconds (epoch seconds) |
+| `get_frac_secs()` | `double` | Fractional seconds `[0.0, 1.0)` |
+| `get_real_secs()` | `double` | Combined as a single double (may lose precision) |
+| `get_tick_count(rate)` | `long` | Fractional part converted to clock ticks |
+| `to_ticks(rate)` | `long long` | Full time as a 64-bit tick count |
+
+### Arithmetic
+
+`time_spec_t` supports `+`, `-`, `+=`, `-=` with other `time_spec_t` objects or `double` values, and comparison operators `==`, `!=`, `<`, `<=`, `>`, `>=`.
+
+```cpp
+auto now = usrp->get_time_now();
+
+// Schedule an event 0.5 seconds from now
+auto future = now + 0.5;
+
+// Time in ticks at 200 MHz master clock
+long long ticks = future.to_ticks(200e6);
+
+// Set device time to zero at next PPS
+usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+```
+
+---
+
+## device_addr_t
+
+`device_addr_t` is a key/value string map used to specify device addresses, transport options, and miscellaneous arguments throughout the UHD API.
+
+```cpp
+#include <uhd/types/device_addr.hpp>
+
+class device_addr_t : public dict<std::string, std::string> {
+public:
+    device_addr_t(const std::string& args = "");
+    device_addr_t(const char* args);
+    device_addr_t(const std::map<std::string, std::string>& info);
+
+    std::string to_string()    const;  // "key=val,key2=val2"
+    std::string to_pp_string() const;  // pretty-printed
+
+    template <typename T>
+    T cast(const std::string& key, const T& def) const;
+};
+```
+
+Arguments can be provided as a delimiter-separated string or built up key-by-key:
+
+```cpp
+// From string
+uhd::device_addr_t args("addr=192.168.10.2,recv_buff_size=1e6");
+
+// Key-by-key
+uhd::device_addr_t args;
+args["addr"]           = "192.168.10.2";
+args["recv_buff_size"] = "1000000";
+args["type"]           = "x300";
+
+// Typed cast with default fallback
+double buf_size = args.cast<double>("recv_buff_size", 0.0);
+```
+
+### Common Device Address Keys
+
+| Key | Example | Description |
+|---|---|---|
+| `"addr"` | `"192.168.10.2"` | IP address for Ethernet-connected devices |
+| `"type"` | `"b200"`, `"x300"` | Device type filter |
+| `"serial"` | `"30C419A"` | Target a specific serial number |
+| `"addr0"`, `"addr1"` | `"192.168.10.2"` | Multi-device MIMO addresses |
+| `"recv_buff_size"` | `"50e6"` | Receive socket buffer size in bytes |
+| `"send_buff_size"` | `"50e6"` | Transmit socket buffer size in bytes |
+| `"master_clock_rate"` | `"200e6"` | Override master clock rate |
+
+---
+
+## sensor_value_t
+
+`sensor_value_t` holds a named hardware measurement with a value string, unit, and data type.
+
+```cpp
+#include <uhd/types/sensors.hpp>
+
+struct sensor_value_t {
+    std::string name;
+    std::string value;
+    std::string unit;
+
+    enum data_type_t {
+        BOOLEAN = 'b',
+        INTEGER = 'i',
+        REALNUM = 'r',
+        STRING  = 's'
+    } type;
+
+    bool   to_bool()  const;
+    signed to_int()   const;
+    double to_real()  const;
+    std::string to_pp_string() const;
+};
+```
+
+<ResponseField name="name" type="std::string">
+  Human-readable sensor name, e.g., `"lo_locked"`, `"ref_locked"`, `"temp"`.
+</ResponseField>
+
+<ResponseField name="value" type="std::string">
+  Sensor value as a string. For booleans: `"true"` or `"false"`. For numeric types: formatted by the sensor's format string.
+</ResponseField>
+
+<ResponseField name="unit" type="std::string">
+  Unit string. For booleans, contains the appropriate label (`"unlocked"` / `"locked"`). For reals, e.g., `"C"` or `"dBm"`.
+</ResponseField>
+
+<ResponseField name="type" type="data_type_t">
+  One of `BOOLEAN`, `INTEGER`, `REALNUM`, or `STRING`.
+</ResponseField>
+
+```cpp
+// Read and check LO lock
+auto sensor = usrp->get_rx_sensor("lo_locked", 0);
+std::cout << sensor.to_pp_string() << "\n";  // "lo_locked: locked"
+if (!sensor.to_bool()) {
+    throw std::runtime_error("LO is not locked");
+}
+
+// Read temperature
+auto temp = usrp->get_mboard_sensor("temp", 0);
+std::cout << "Board temperature: " << temp.to_real() << " " << temp.unit << "\n";
+```
+
+---
+
+## meta_range_t and range_t
+
+`range_t` describes a continuous numeric interval with optional step resolution. `meta_range_t` is a collection of `range_t` objects that together represent all valid values for a parameter.
+
+```cpp
+#include <uhd/types/ranges.hpp>
+
+class range_t {
+public:
+    range_t(double value);                         // single value
+    range_t(double start, double stop, double step = 0);
+
+    double start() const;
+    double stop()  const;
+    double step()  const;                          // 0 = continuous
+    std::string to_pp_string() const;
+};
+
+struct meta_range_t : public std::vector<range_t> {
+    meta_range_t(double start, double stop, double step = 0);
+
+    double start() const;          // overall minimum
+    double stop()  const;          // overall maximum
+    double step()  const;          // overall step (if uniform)
+
+    double clip(double value, bool clip_step = false) const;
+    meta_range_t as_monotonic() const;
+    std::string to_pp_string() const;
+};
+
+typedef meta_range_t gain_range_t;
+typedef meta_range_t freq_range_t;
+```
+
+### `clip()`
+
+```cpp
+double clip(double value, bool clip_step = false) const;
+```
+
+Clamps `value` to the nearest valid point within the range. When `clip_step = true`, also snaps to the nearest step boundary.
+
+```cpp
+// Query and clip a gain value
+uhd::gain_range_t range = usrp->get_rx_gain_range(0);
+std::cout << "Gain range: " << range.to_pp_string() << "\n";
+// e.g. "0.000000 – 76.000000, step 1.000000"
+
+double requested = 85.0;  // out of range
+double actual    = range.clip(requested, true);
+usrp->set_rx_gain(actual, 0);
+
+// Query sample rate range
+auto rates = usrp->get_rx_rates(0);
+std::cout << "Min rate: " << rates.start() / 1e6 << " Msps\n";
+std::cout << "Max rate: " << rates.stop()  / 1e6 << " Msps\n";
+```
+
+---
+
+## Summary Table
+
+| Type | Header | Primary Use |
+|---|---|---|
+| `tune_request_t` | `uhd/types/tune_request.hpp` | Specify LO and DSP tuning policy |
+| `time_spec_t` | `uhd/types/time_spec.hpp` | Absolute and relative timestamps |
+| `device_addr_t` | `uhd/types/device_addr.hpp` | Device discovery and transport options |
+| `sensor_value_t` | `uhd/types/sensors.hpp` | Hardware sensor readings |
+| `meta_range_t` / `range_t` | `uhd/types/ranges.hpp` | Valid value ranges for RF parameters |
+| `gain_range_t` | `uhd/types/ranges.hpp` | Alias for `meta_range_t`, used for gain |
+| `freq_range_t` | `uhd/types/ranges.hpp` | Alias for `meta_range_t`, used for frequency |
